@@ -39,11 +39,12 @@ class TargetType(Enum):
 class TargetConfig:
     base_url: str
     type: TargetType
-    user_agent: str = "Fenrir/3.1-DebugArchitect"
+    # 👇 AQUÍ ESTÁ EL CAMBIO: Disfrazamos al script de Google Chrome legítimo
+    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     timeout: int = 20
 
 # ==============================================================================
-#  🐺 CORE ENGINE: FENRIR (DEBUG MODE)
+#  🐺 CORE ENGINE: FENRIR (STEALTH MODE)
 # ==============================================================================
 
 class FenrirEngine:
@@ -100,7 +101,7 @@ class FenrirEngine:
             print(colorize(f"❌ Error crítico inyectando cookies: {e}", Colors.RED))
 
     async def fuzz_endpoints(self, wordlist: List[str]):
-        print(colorize(f"\n🐕 RASTREANDO ({self.config.type.name}) - MODO VERBOSE ACTIVADO...", Colors.BOLD))
+        print(colorize(f"\n🐕 RASTREANDO ({self.config.type.name}) - MODO STEALTH ACTIVADO...", Colors.BOLD))
         # Ejecutamos concurrentemente
         tasks = [self._check_endpoint(path) for path in wordlist]
         await asyncio.gather(*tasks)
@@ -172,9 +173,9 @@ class FenrirEngine:
 # ==============================================================================
 
 async def main():
-    print(colorize("\n🐺 FENRIR v3.1 - LOUD MOUTH EDITION 🐺\n", Colors.RED))
+    print(colorize("\n🐺 FENRIR v3.2 - STEALTH EDITION 🐺\n", Colors.RED))
 
-    base_input = input(">> URL Base: ").strip()
+    base_input = input(">> URL Base (RAÍZ): ").strip()
     if not base_input.startswith("http"): base_input = f"http://{base_input}"
     # Fix trailing slash para aiohttp
     if not base_input.endswith("/"): base_input += "/"
@@ -185,7 +186,7 @@ async def main():
     
     t_type = TargetType.WORDPRESS if t_choice == '1' else TargetType.PRESTASHOP
     
-    # Listas de objetivos ajustadas para no saturar el log de debug
+    # Listas de objetivos
     if t_type == TargetType.WORDPRESS:
         wordlist = ["wp-admin/", "wp-admin/index.php", "wp-admin/profile.php"]
     else:
