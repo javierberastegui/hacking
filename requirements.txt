@@ -7,3 +7,4 @@ Ya está actualizado.
  create mode 100644 requirements.txt
 ⬆️ Enviando a GitHub...
 ✅ ¡Boom! Todo sincronizado, Lokky.
+aiohttp
