@@ -31,7 +31,7 @@ Aquí encontrarás:
 
 Mientras pico código, probablemente esté sonando esto:
 
-[![Spotify](https://img.shields.io/badge/Spotify-Listen_Now-1ED760?style=for-the-badge&logo=spotify&logoColor=white)](https://open.spotify.com/)
+[![Spotify](https://img.shields.io/badge/Spotify-Listen_Now-1ED760?style=for-the-badge&logo=spotify&logoColor=white)](https://open.spotify.com/intl-es/artist/1sBZULIG7bMKvf2doobonn)
 
 ---
 
