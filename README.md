@@ -1,4 +1,4 @@
-# 💀 Protocolo: HACKING // LOKKY
+# 💀 Protocolo: HACKING // LOKKY :D
 
 ![Status](https://img.shields.io/badge/STATUS-OPERATIONAL-success?style=for-the-badge)
 ![OS](https://img.shields.io/badge/SYSTEM-UBUNTU-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)
