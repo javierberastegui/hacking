@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any, Callable, Generator, Coroutine
 from enum import Enum, auto
 from functools import wraps
 from http.cookies import SimpleCookie
+from yarl import URL  # <--- CRÍTICO: Necesario para manejar URLs correctamente
 
 # ==============================================================================
 #  🛠️ CONFIGURACIÓN & UTILS
@@ -50,7 +51,7 @@ def async_timer(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         start = time.perf_counter()
         result = await func(*args, **kwargs)
         end = time.perf_counter()
-        if (end - start) * 1000 > 1500: # Tolerancia alta
+        if (end - start) * 1000 > 2000:
             logger.debug(f"Slow ops: {func.__name__}")
         return result
     return wrapper
@@ -65,7 +66,7 @@ class AuthMode(Enum):
 @dataclass(frozen=True)
 class TargetConfig:
     base_url: str
-    user_agent: str = "Fenrir/2.2-LieDetector"
+    user_agent: str = "Fenrir/2.3-GoldenMaster"
     timeout: int = 20
 
 @dataclass
@@ -134,30 +135,48 @@ class FenrirEngine:
             self.auth_mode = AuthMode.JWT
 
     def inject_raw_cookie(self, raw_cookie: str):
+        """
+        Inyecta cookies parseando strings raw. 
+        Usa yarl.URL para evitar errores de 'str object has no attribute raw_host'.
+        """
         if not self.session: return
         print(colorize("💉 Inyectando Cookies...", Colors.YELLOW))
         try:
+            # FIX: Convertimos la URL base a objeto URL explícitamente
+            url_obj = URL(self.config.base_url)
+            
             cookie = SimpleCookie()
-            # Arreglo rápido para cookies copiadas de headers que usan ; como separador
-            raw_cookie = raw_cookie.replace("Cookie: ", "")
+            raw_cookie = raw_cookie.replace("Cookie: ", "").strip()
+            
+            # Validación inteligente de input
+            if "=" not in raw_cookie:
+                print(colorize("⚠️ ALERTA: Has pegado solo el valor sin el nombre.", Colors.RED))
+                print(f"   Asumiendo PHPSESSID (Puede fallar). Formato correcto: {Colors.BOLD}Nombre=Valor{Colors.RESET}")
+                raw_cookie = f"PHPSESSID={raw_cookie}"
+
             cookie.load(raw_cookie)
             
             for key, morsel in cookie.items():
-                self.session.cookie_jar.update_cookies({key: morsel.value}, response_url=self.config.base_url)
+                # FIX: Pasamos el objeto url_obj, no el string
+                self.session.cookie_jar.update_cookies({key: morsel.value}, response_url=url_obj)
             
             self.auth_mode = AuthMode.COOKIE
-            print(colorize("✅ Cookies cargadas en el cargador.", Colors.GREEN))
+            print(colorize(f"✅ Cookies cargadas: {list(cookie.keys())}", Colors.GREEN))
+            
         except Exception as e:
-            print(colorize(f"❌ Error parseando cookies: {e}", Colors.RED))
+            print(colorize(f"❌ Error inyectando cookies: {e}", Colors.RED))
 
     @async_timer
     async def pre_flight_check(self) -> bool:
         if not self.session: return False
         try:
-            async with self.session.get("/") as resp:
+            # Usamos una ruta relativa vacía para chequear la base
+            async with self.session.get("") as resp:
                 print(colorize(f"✅ Host activo: {resp.status}", Colors.GREEN))
                 return True
-        except: return False
+        except Exception as e:
+            print(colorize(f"❌ Host inalcanzable: {e}", Colors.RED))
+            return False
 
     @audit_log
     async def hunt_credentials(self, login_path: str, creds: Dict[str, str]) -> AuthResult:
@@ -165,14 +184,14 @@ class FenrirEngine:
         print(colorize(f"🕵️  Intentando login en: {login_path}", Colors.YELLOW))
         
         try:
-            # Estrategia POST Form Data
+            # POST estándar
             async with self.session.post(login_path, data=creds) as resp:
-                 # Check Cookies
+                 # Verificación de Cookies
                  if self.session.cookie_jar.filter_cookies(self.config.base_url):
                     print(colorize("✅ [COOKIE] Sesión capturada.", Colors.GREEN))
                     return AuthResult(AuthMode.COOKIE, "SessionCookie", True)
                  
-                 # Check Token
+                 # Verificación de Token en HTML
                  text = await resp.text()
                  match = re.search(r'eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+', text)
                  if match: return AuthResult(AuthMode.JWT, match.group(0), True)
@@ -189,63 +208,61 @@ class FenrirEngine:
         found = [r for r in results if r is not None]
         
         if not found:
-            print(colorize("🤷 Ningún endpoint validado pasó el filtro de veracidad.", Colors.CYAN))
+            print(colorize("🤷 Ningún endpoint pasó el filtro de veracidad (Soft 404 detectado).", Colors.CYAN))
         return found
 
     async def _check_endpoint(self, path: str) -> Optional[str]:
         if not self.session: return None
         try:
-            # allow_redirects=True para seguir redirecciones de WP
             async with self.session.get(path, allow_redirects=True) as resp:
                 content = await resp.text()
                 
                 # --- DETECTOR DE MENTIRAS (SOFT 404) ---
                 if resp.status == 200:
-                    # Palabras que indican que NO estamos donde queremos
-                    keywords_fail = ["Page not found", "Página no encontrada", "404 Error", "no existe", "Whoops"]
-                    if any(k in content for k in keywords_fail):
-                        # Falso positivo detectado, ignoramos
-                        return None
+                    # Palabras prohibidas que indican error aunque sea 200 OK
+                    fail_keywords = ["Page not found", "Página no encontrada", "no existe", "Whoops", "404"]
+                    if any(k in content for k in fail_keywords):
+                        return None # Falso positivo
                     
-                    # Palabras que confirman ÉXITO (Opcional, para marcar como REAL)
-                    # Si no encuentra fallo, asumimos bueno, pero podríamos ser más estrictos
                     print(f"  -> {colorize('ACCESIBLE [VALIDADO]', Colors.GREEN)} {path}")
                     return path
                 
                 elif resp.status == 403:
-                    # Un 403 real suele significar que el archivo existe pero no tenemos permiso
                     print(f"  -> {colorize('PROTEGIDO [403]', Colors.YELLOW)} {path}")
 
         except: pass
         return None
 
-    # ... [ATAQUES JWT] ...
     async def execute_attacks(self, targets: List[str]):
         if self.auth_mode == AuthMode.COOKIE:
-            print(colorize("\nℹ️ Modo Cookie: Ataques JWT omitidos.", Colors.CYAN))
+            print(colorize("\nℹ️ Modo Cookie: Ataques criptográficos JWT omitidos.", Colors.CYAN))
             return
-        # (Aquí iría la lógica de ataque JWT si hubiese token)
+        # Lógica JWT omitida para brevedad en modo Cookie
 
 # ==============================================================================
 #  🏁 MAIN
 # ==============================================================================
 
 async def main():
-    print(colorize("\n🐺 FENRIR v2.2 - LIE DETECTOR EDITION 🐺\n", Colors.RED))
+    print(colorize("\n🐺 FENRIR v2.3 - GOLDEN MASTER 🐺\n", Colors.RED))
 
-    # OJO: Pon la URL base SIN subcarpetas raras si quieres escanear la raíz
     base_input = input(">> URL Base (ej: https://web.com/carpeta): ").strip()
     if not base_input.startswith("http"): base_input = f"http://{base_input}"
     
+    # FIX: Aseguramos Trailing Slash para evitar ValueError en aiohttp
+    if not base_input.endswith("/"):
+        base_input += "/"
+    
+    print(f"{Colors.CYAN}ℹ️  Target fijado: {base_input}{Colors.RESET}")
     config = TargetConfig(base_url=base_input)
 
     async with FenrirEngine(config) as engine:
         if not await engine.pre_flight_check():
-            print("❌ Host caído."); sys.exit(1)
+            sys.exit(1)
 
         print("\n[1] Auto-Login")
         print("[2] Pegar Token JWT")
-        print("[3] Inyección de Cookie (Desde Cookie-Editor)")
+        print("[3] Inyección de Cookie (Session Hijacking)")
         choice = input(">> Opción: ").strip()
 
         if choice == '1':
@@ -261,24 +278,27 @@ async def main():
             engine.token = t
 
         elif choice == '3':
-            print(f"\n{Colors.YELLOW}👉 Pega el contenido de 'PrestaShop-xxxx' o 'PHPSESSID' (o copia todo el header Cookie){Colors.RESET}")
-            # Permitimos pegar clave=valor
+            print(f"\n{Colors.YELLOW}👉 Pega la cookie formato: Nombre=Valor{Colors.RESET}")
+            print(f"{Colors.CYAN}   Ej: PrestaShop-a8b...=def502...{Colors.RESET}")
             raw = input(">> Cookie String: ").strip()
-            # Formateo básico por si el usuario pega solo el valor
-            if "=" not in raw and len(raw) > 20:
-                 print(f"{Colors.CYAN}⚠️ Detectado valor suelto. Asumiendo PHPSESSID.{Colors.RESET}")
-                 raw = f"PHPSESSID={raw}"
-            
             engine.inject_raw_cookie(raw)
 
-        # Discovery - Rutas de PrestaShop REALES
+        # Discovery - Objetivos PrestaShop/General
         targets = await engine.fuzz_endpoints([
-            "/admin", "/administrator", "/backoffice", "/dashboard", 
-            "/index.php?controller=AdminDashboard", "/admin-dev", "/adm"
+            "index.php?controller=AdminDashboard", 
+            "index.php?controller=AdminLogin",
+            "dashboard", "admin", "backoffice", "adm", 
+            "administrador", "panel", "admin-dev"
         ])
         
         await engine.execute_attacks(targets)
 
 if __name__ == "__main__":
-    if sys.platform == 'win32': asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main())
+    try:
+        if sys.platform == 'win32': asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Bye.")
+    except Exception as e:
+        # Capturamos errores fatales para ver qué pasa
+        print(f"\n❌ CRITICAL ERROR: {e}")
