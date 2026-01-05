@@ -50,7 +50,7 @@ def async_timer(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         start = time.perf_counter()
         result = await func(*args, **kwargs)
         end = time.perf_counter()
-        if (end - start) * 1000 > 1000:
+        if (end - start) * 1000 > 1500: # Tolerancia alta
             logger.debug(f"Slow ops: {func.__name__}")
         return result
     return wrapper
@@ -65,8 +65,8 @@ class AuthMode(Enum):
 @dataclass(frozen=True)
 class TargetConfig:
     base_url: str
-    user_agent: str = "Fenrir/2.1-SessionHijacker"
-    timeout: int = 15
+    user_agent: str = "Fenrir/2.2-LieDetector"
+    timeout: int = 20
 
 @dataclass
 class AuthResult:
@@ -134,19 +134,19 @@ class FenrirEngine:
             self.auth_mode = AuthMode.JWT
 
     def inject_raw_cookie(self, raw_cookie: str):
-        """
-        Parsea una cadena de cookies cruda (tipo navegador) y la inyecta.
-        """
         if not self.session: return
         print(colorize("💉 Inyectando Cookies...", Colors.YELLOW))
         try:
             cookie = SimpleCookie()
+            # Arreglo rápido para cookies copiadas de headers que usan ; como separador
+            raw_cookie = raw_cookie.replace("Cookie: ", "")
             cookie.load(raw_cookie)
+            
             for key, morsel in cookie.items():
                 self.session.cookie_jar.update_cookies({key: morsel.value}, response_url=self.config.base_url)
             
             self.auth_mode = AuthMode.COOKIE
-            print(colorize("✅ Session Hijacking completado.", Colors.GREEN))
+            print(colorize("✅ Cookies cargadas en el cargador.", Colors.GREEN))
         except Exception as e:
             print(colorize(f"❌ Error parseando cookies: {e}", Colors.RED))
 
@@ -165,13 +165,14 @@ class FenrirEngine:
         print(colorize(f"🕵️  Intentando login en: {login_path}", Colors.YELLOW))
         
         try:
-            # Estrategia POST Form Data (Estándar WP)
+            # Estrategia POST Form Data
             async with self.session.post(login_path, data=creds) as resp:
+                 # Check Cookies
                  if self.session.cookie_jar.filter_cookies(self.config.base_url):
                     print(colorize("✅ [COOKIE] Sesión capturada.", Colors.GREEN))
                     return AuthResult(AuthMode.COOKIE, "SessionCookie", True)
                  
-                 # Check HTML for Token
+                 # Check Token
                  text = await resp.text()
                  match = re.search(r'eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+', text)
                  if match: return AuthResult(AuthMode.JWT, match.group(0), True)
@@ -182,13 +183,13 @@ class FenrirEngine:
         return AuthResult(AuthMode.NONE, "", False)
 
     async def fuzz_endpoints(self, wordlist: List[str]) -> List[str]:
-        print(colorize(f"\n🐕 RASTREANDO ({self.auth_mode.name})...", Colors.BOLD))
+        print(colorize(f"\n🐕 RASTREANDO ({self.auth_mode.name}) con Detector de Mentiras...", Colors.BOLD))
         tasks = [self._check_endpoint(path) for path in wordlist]
         results = await asyncio.gather(*tasks)
         found = [r for r in results if r is not None]
         
         if not found:
-            print(colorize("🤷 Sin accesos. (¿Seguro que la cookie es de Admin?)", Colors.CYAN))
+            print(colorize("🤷 Ningún endpoint validado pasó el filtro de veracidad.", Colors.CYAN))
         return found
 
     async def _check_endpoint(self, path: str) -> Optional[str]:
@@ -196,19 +197,32 @@ class FenrirEngine:
         try:
             # allow_redirects=True para seguir redirecciones de WP
             async with self.session.get(path, allow_redirects=True) as resp:
-                # Si nos devuelve 200 y NO nos ha redirigido al login, es válido
-                if resp.status == 200 and "wp-login" not in str(resp.url):
-                    print(f"  -> {colorize('ACCESIBLE [200]', Colors.GREEN)} {path}")
+                content = await resp.text()
+                
+                # --- DETECTOR DE MENTIRAS (SOFT 404) ---
+                if resp.status == 200:
+                    # Palabras que indican que NO estamos donde queremos
+                    keywords_fail = ["Page not found", "Página no encontrada", "404 Error", "no existe", "Whoops"]
+                    if any(k in content for k in keywords_fail):
+                        # Falso positivo detectado, ignoramos
+                        return None
+                    
+                    # Palabras que confirman ÉXITO (Opcional, para marcar como REAL)
+                    # Si no encuentra fallo, asumimos bueno, pero podríamos ser más estrictos
+                    print(f"  -> {colorize('ACCESIBLE [VALIDADO]', Colors.GREEN)} {path}")
                     return path
+                
                 elif resp.status == 403:
+                    # Un 403 real suele significar que el archivo existe pero no tenemos permiso
                     print(f"  -> {colorize('PROTEGIDO [403]', Colors.YELLOW)} {path}")
+
         except: pass
         return None
 
-    # ... [ATAQUES JWT SE MANTIENEN IGUAL PERO OCULTOS POR BREVEDAD] ...
+    # ... [ATAQUES JWT] ...
     async def execute_attacks(self, targets: List[str]):
         if self.auth_mode == AuthMode.COOKIE:
-            print(colorize("\nℹ️ Modo Cookie: Ataques JWT omitidos. Auditoría de acceso realizada.", Colors.CYAN))
+            print(colorize("\nℹ️ Modo Cookie: Ataques JWT omitidos.", Colors.CYAN))
             return
         # (Aquí iría la lógica de ataque JWT si hubiese token)
 
@@ -217,9 +231,9 @@ class FenrirEngine:
 # ==============================================================================
 
 async def main():
-    print(colorize("\n🐺 FENRIR v2.1 - SESSION HIJACKER 🐺\n", Colors.RED))
+    print(colorize("\n🐺 FENRIR v2.2 - LIE DETECTOR EDITION 🐺\n", Colors.RED))
 
-    # OJO AQUÍ: Asegúrate de poner la URL base SIN /wp-login.php
+    # OJO: Pon la URL base SIN subcarpetas raras si quieres escanear la raíz
     base_input = input(">> URL Base (ej: https://web.com/carpeta): ").strip()
     if not base_input.startswith("http"): base_input = f"http://{base_input}"
     
@@ -229,16 +243,16 @@ async def main():
         if not await engine.pre_flight_check():
             print("❌ Host caído."); sys.exit(1)
 
-        print("\n[1] Auto-Login (Poco fiable en WP moderno)")
+        print("\n[1] Auto-Login")
         print("[2] Pegar Token JWT")
-        print("[3] Inyección de Cookie (Bypass Total)")
+        print("[3] Inyección de Cookie (Desde Cookie-Editor)")
         choice = input(">> Opción: ").strip()
 
         if choice == '1':
             user = input("User: ")
             pwd = input("Pass: ")
             path = input(">> Login Path: ").strip()
-            res = await engine.hunt_credentials(path, {"log": user, "pwd": pwd, "wp-submit": "Log In"})
+            res = await engine.hunt_credentials(path, {"email": user, "passwd": pwd, "submit": "Login"})
             if res.success: engine.auth_mode = res.mode
             else: print("❌ Fallo."); sys.exit(1)
 
@@ -247,16 +261,20 @@ async def main():
             engine.token = t
 
         elif choice == '3':
-            print(f"\n{Colors.YELLOW}👉 Ve al navegador -> F12 -> Red -> Petición cualquiera -> Copia 'Cookie: ...'{Colors.RESET}")
-            raw = input(">> Pega la cadena 'Cookie': ").strip()
-            # Limpieza básica por si copias "Cookie: " al principio
-            if raw.lower().startswith("cookie:"): raw = raw[7:].strip()
+            print(f"\n{Colors.YELLOW}👉 Pega el contenido de 'PrestaShop-xxxx' o 'PHPSESSID' (o copia todo el header Cookie){Colors.RESET}")
+            # Permitimos pegar clave=valor
+            raw = input(">> Cookie String: ").strip()
+            # Formateo básico por si el usuario pega solo el valor
+            if "=" not in raw and len(raw) > 20:
+                 print(f"{Colors.CYAN}⚠️ Detectado valor suelto. Asumiendo PHPSESSID.{Colors.RESET}")
+                 raw = f"PHPSESSID={raw}"
+            
             engine.inject_raw_cookie(raw)
 
-        # Discovery
+        # Discovery - Rutas de PrestaShop REALES
         targets = await engine.fuzz_endpoints([
-            "/wp-admin/", "/wp-admin/users.php", "/wp-admin/options-general.php", 
-            "/wp-json/wp/v2/users", "/admin", "/dashboard"
+            "/admin", "/administrator", "/backoffice", "/dashboard", 
+            "/index.php?controller=AdminDashboard", "/admin-dev", "/adm"
         ])
         
         await engine.execute_attacks(targets)
