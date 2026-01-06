@@ -4,6 +4,8 @@ import sys
 import re
 import time
 import logging
+import os
+import shutil
 from dataclasses import dataclass
 from typing import Optional, Dict
 from enum import Enum, auto
@@ -30,7 +32,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
 class Colors:
-    # HE AÑADIDO 'MAGENTA' AQUÍ PARA CORREGIR EL ERROR
+    # AHORA SÍ ESTÁ DEFINIDO EL MAGENTA
     RED, GREEN, YELLOW, CYAN, MAGENTA, RESET, BOLD = "\033[91m", "\033[92m", "\033[93m", "\033[96m", "\033[95m", "\033[0m", "\033[1m"
 
 def colorize(text: str, color: str) -> str: return f"{color}{text}{Colors.RESET}"
@@ -47,7 +49,7 @@ class TargetConfig:
     timeout: int = 20
 
 # ==============================================================================
-#  👻 GHOST BROWSER (MÓDULO SELENIUM)
+#  👻 GHOST BROWSER (UBUNTU SNAP FIX)
 # ==============================================================================
 
 class GhostBrowser:
@@ -61,6 +63,14 @@ class GhostBrowser:
             return
 
         print(colorize("\n   👻 Invocando navegador fantasma...", Colors.CYAN))
+        
+        # --- FIX CRÍTICO PARA UBUNTU/SNAP ---
+        # Creamos una carpeta temporal local para que el Firefox Snap pueda leerla
+        local_tmp = os.path.join(os.getcwd(), "selenium_temp")
+        if not os.path.exists(local_tmp):
+            os.makedirs(local_tmp)
+        # Forzamos a Python a usar esta carpeta en vez de /tmp/ del sistema
+        os.environ["TMPDIR"] = local_tmp
         
         # Parseo de cookies
         cookies_dict = {}
@@ -79,6 +89,8 @@ class GhostBrowser:
         try:
             options = FirefoxOptions()
             options.set_preference("general.useragent.override", self.config.user_agent)
+            
+            # Anti-bot básico
             options.set_preference("dom.webdriver.enabled", False)
             options.set_preference('useAutomationExtension', False)
             
@@ -88,6 +100,7 @@ class GhostBrowser:
             
         except Exception as e:
             print(colorize(f"   ❌ Error iniciando navegador: {e}", Colors.RED))
+            print("   (Si usas Ubuntu, asegúrate de tener Firefox instalado normalmente)")
             return
 
         try:
@@ -108,6 +121,7 @@ class GhostBrowser:
             driver.get(final_url)
             
             print(colorize("\n   ✅ NAVEGADOR ABIERTO. La puerta está abierta.", Colors.GREEN))
+            print(colorize("   ⚠️  NOTA: Si ves 'Página no encontrada' pero tienes la barra negra arriba, ¡ESTÁS DENTRO!", Colors.MAGENTA))
             input("   [Presiona Enter en esta terminal para cerrar el navegador] ")
             
         except Exception as e:
@@ -115,6 +129,10 @@ class GhostBrowser:
         finally:
             if driver:
                 driver.quit()
+            # Limpieza
+            if os.path.exists(local_tmp):
+                try: shutil.rmtree(local_tmp)
+                except: pass
 
 # ==============================================================================
 #  🦍 FENRIR ENGINE (AIOHTTP CLÁSICO)
@@ -208,7 +226,7 @@ class FenrirEngine:
 # ==============================================================================
 
 async def main():
-    print(colorize("\n🦍 FENRIR v3.8 - HYBRID EDITION (FIXED) 🦍\n", Colors.RED))
+    print(colorize("\n🦍 FENRIR v3.9 - UBUNTU EDITION 🦍\n", Colors.RED))
 
     # 1. URL
     url_input = input(">> URL Base (Raíz): ").strip()
@@ -249,7 +267,7 @@ async def main():
     path_input = input(">> Ruta: ").strip()
     if not path_input: path_input = default_path
     
-    # Fix para rutas relativas vs absolutas
+    # Fix para rutas relativas
     if path_input.startswith("http"):
         path_input = URL(path_input).path
     if not path_input.startswith("/"): path_input = f"/{path_input}"
@@ -263,11 +281,9 @@ async def main():
     config = TargetConfig(base_url=url_input, type=target_type, user_agent=ua_input)
 
     if mode == '2':
-        # Lanzamos Selenium (God Mode)
         ghost = GhostBrowser(config)
         ghost.launch(final_cookie_string, path_input)
     else:
-        # Lanzamos Check Clásico
         async with FenrirEngine(config) as engine:
             engine.inject_raw_cookie(final_cookie_string)
             await engine.check_target(path_input)
