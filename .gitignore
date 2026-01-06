@@ -1,0 +1,26 @@
+.venv/
+.envrc
+__pycache__/
+*.pyc
+.vscode/
+.venv/
+# Entornos virtuales
+.venv/
+env/
+venv/
+ENV/
+
+# Bytecode de Python (basura compilada)
+__pycache__/
+*.py[cod]
+
+# Variables de entorno y secretos (¡CRÍTICO!)
+.env
+.envrc
+
+# Configuración del IDE (son tus preferencias, no del proyecto)
+.vscode/
+.idea/
+
+# Bases de datos locales
+*.sqlite3
