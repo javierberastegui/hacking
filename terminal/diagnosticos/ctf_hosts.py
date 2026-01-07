@@ -54,7 +54,6 @@ class HostEntry:
 class EphemeralHostsSession:
     """
     Advanced Context Manager for Ephemeral Host Management.
-    
     Features:
     - Automatic Backup on entry.
     - Session tracking: Remembers what was added.
@@ -88,7 +87,6 @@ class EphemeralHostsSession:
             print("🧹 No changes to clean up.")
         
         print("👋 Hosts file restored to clean state. Happy hacking.")
-        # We handle exceptions if needed, but returning None propagates them (desired behavior)
 
     def _backup(self) -> None:
         """Creates a safety backup."""
@@ -141,10 +139,9 @@ class EphemeralHostsSession:
                     found = True
                 else:
                     print(f"ℹ️  '{hostname}' already exists on {ip}")
-                    return # Nothing added, nothing to track
+                    return 
 
         if not found:
-            # Check if hostname exists on another IP (conflict resolution could go here)
             new_entry = HostEntry(ip, [hostname])
             self.entries.append(new_entry)
             print(f"🎯 Target Acquired: {ip} -> {hostname}")
@@ -159,8 +156,7 @@ class EphemeralHostsSession:
         """
         Removes exactly what was added during this session.
         """
-        # Reload fresh to avoid race conditions (paranoia mode)
-        self._load_entries()
+        self._load_entries() # Reload to avoid race conditions
         
         modified = False
         for ip, hostname in self.session_created:
@@ -171,64 +167,88 @@ class EphemeralHostsSession:
                         print(f"🗑️  Revoked: {hostname} from {ip}")
                         modified = True
                     
-                    # If entry has no more hostnames, mark for deletion (optional, but clean)
-                    if not entry.hostnames:
-                         # We'll filter empty entries during write or simple filter here
-                         pass 
-
-        # Filter out entries that lost all hostnames (ghost IPs)
+        # Filter out ghost IPs (entries with no hostnames left)
         self.entries = [e for e in self.entries if e.is_comment or len(e.hostnames) > 0]
         
         if modified:
             self._flush()
 
-# --- Interactive Loop ---
+# --- Interactive Shell UI ---
 
-def get_input(prompt: str) -> str:
-    """Helper for clean input handling."""
-    try:
-        return input(prompt).strip()
-    except EOFError:
-        return "exit"
+class InteractiveShell:
+    """
+    Handles the user interaction state machine.
+    """
+    def __init__(self, session: EphemeralHostsSession):
+        self.session = session
+        self.current_ip: Optional[str] = None
+
+    def run(self):
+        print("💀 CTF Hosts Manager - Continuous Flow Mode")
+        print("-------------------------------------------")
+        print("1. Enter Target IP when prompted.")
+        print("2. Enter Hostnames continuously.")
+        print("3. Commands: ':new' to change IP, ':exit' to quit.")
+        print("-------------------------------------------\n")
+
+        while True:
+            try:
+                if not self.current_ip:
+                    self._handle_ip_input()
+                else:
+                    self._handle_hostname_input()
+            except KeyboardInterrupt:
+                # Let the outer loop handle the exit
+                raise
+
+    def _handle_ip_input(self):
+        """State: Waiting for IP."""
+        raw = input("🎯 [SET TARGET IP] > ").strip()
+        if self._is_exit_command(raw):
+            raise EOFError # Trigger exit
+        
+        if not raw: return
+
+        # Simple validation could be added here
+        self.current_ip = raw
+        print(f"✅ Context switched to: {self.current_ip}")
+
+    def _handle_hostname_input(self):
+        """State: Waiting for Hostnames for current IP."""
+        raw = input(f"🔗 [{self.current_ip}] Add Host > ").strip()
+        
+        if self._is_exit_command(raw):
+            raise EOFError
+        
+        if raw == ":new":
+            print("🔄 Resetting target context...")
+            self.current_ip = None
+            return
+
+        if not raw: return
+
+        # Support space-separated multiple hosts in one line too
+        hosts = raw.split()
+        for host in hosts:
+            self.session.add_target(self.current_ip, host)
+
+    def _is_exit_command(self, cmd: str) -> bool:
+        return cmd.lower() in ["exit", "quit", ":exit", ":quit"]
+
+# --- Main Entry Point ---
 
 @require_root
 def main_loop() -> None:
-    print("💀 CTF Hosts Manager - Ephemeral Mode")
-    print("-------------------------------------")
-    print("• Enter 'exit', 'quit' or Ctrl+C to finish.")
-    print("• Format: IP HOSTNAME (e.g., 10.10.10.55 machine.htb)")
-    print("-------------------------------------\n")
-
-    # The Context Manager handles the lifecycle
+    # The Context Manager handles the lifecycle and cleanup
     with EphemeralHostsSession() as session:
-        while True:
-            try:
-                user_input = get_input("root@hosts-injector:~# ")
-                
-                if user_input.lower() in ["exit", "quit"]:
-                    break
-                
-                if not user_input:
-                    continue
-
-                parts = user_input.split()
-                if len(parts) < 2:
-                    print("⚠️  Invalid format. Need: <IP> <HOSTNAME> [ALIAS...]")
-                    continue
-
-                ip = parts[0]
-                hostnames = parts[1:]
-
-                # Basic validation (could be regex, but let's trust the user a bit)
-                for host in hostnames:
-                    session.add_target(ip, host)
-
-            except KeyboardInterrupt:
-                print("\n\n⚠️  Interrupted! Initiating emergency cleanup...")
-                break
-            except Exception as e:
-                print(f"💥 Unexpected error: {e}")
-                break
+        shell = InteractiveShell(session)
+        try:
+            shell.run()
+        except (EOFError, KeyboardInterrupt):
+            # Normal exit flow, context manager will clean up
+            pass
+        except Exception as e:
+            print(f"💥 Unexpected error: {e}")
 
 if __name__ == "__main__":
     main_loop()
