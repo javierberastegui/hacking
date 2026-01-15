@@ -1,12 +1,12 @@
 import re
 import pdfplumber
 import pandas as pd
-from typing import List, Dict, Pattern
+from typing import List, Dict
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import sys
 
-# --- DOMAIN LAYER ---
+# --- ESTRUCTURA DE DATOS ---
 @dataclass
 class Transaction:
     operation_date: str
@@ -17,24 +17,21 @@ class Transaction:
 
 class StatementParser:
     """
-    Motor de extracción v3.0 - Especializado en PDFs con saltos de línea irregulares.
+    Motor v5.0: "The Tokenizer"
+    Estrategia: Cortar el texto por comillas (") y buscar secuencias lógicas de datos.
+    Ignora totalmente el formato visual, solo le importan los datos puros.
     """
-    
-    # EXPLICACIÓN TÉCNICA:
-    # Usamos re.DOTALL | re.MULTILINE para que el punto (.) pille saltos de línea.
-    # \s* se come cualquier espacio o salto de línea entre las comas y las comillas.
-    # Esto arregla el problema de que tu PDF ponga la fecha en una línea y el importe en otra.
-    _TRANSACTION_PATTERN: Pattern = re.compile(
-        r'"(\d{4}-\d{2}-\d{2})"\s*,\s*"(\d+)"\s*,\s*"(.*?)"\s*,\s*"(\d{4}-\d{2}-\d{2})"\s*,\s*"([\d\.,]+)\s*"?',
-        re.DOTALL
-    )
 
     def __init__(self, file_path: Path):
         self.file_path = file_path
 
+    def _is_date(self, text: str) -> bool:
+        # Verifica si parece una fecha YYYY-MM-DD
+        return bool(re.match(r'^\s*\d{4}-\d{2}-\d{2}\s*$', text))
+
     def _clean_amount(self, raw_amount: str) -> float:
-        # Limpiamos puntos de miles y cambiamos coma decimal por punto
-        clean = raw_amount.replace('.', '').replace(',', '.')
+        # Limpia 1.000,00 -> 1000.00
+        clean = raw_amount.strip().replace('.', '').replace(',', '.')
         try:
             return float(clean)
         except ValueError:
@@ -42,81 +39,110 @@ class StatementParser:
 
     def parse(self) -> pd.DataFrame:
         transactions: List[Dict] = []
+        full_text_blob = ""
+
         try:
             with pdfplumber.open(self.file_path) as pdf:
-                print(f"⚙️  Escaneando {len(pdf.pages)} páginas (Modo Deep Scan)...")
-                
-                for i, page in enumerate(pdf.pages):
+                print(f"⚙️  Triturando {len(pdf.pages)} páginas...")
+                # 1. Unimos TODO el PDF en una sola masa de texto gigante
+                for page in pdf.pages:
                     text = page.extract_text()
-                    if not text: continue
-                    
-                    # Buscamos en todo el texto de la página a la vez, no línea a línea
-                    matches = self._TRANSACTION_PATTERN.finditer(text)
-                    
-                    for match in matches:
-                        # Limpiamos los saltos de línea que pueda haber DENTRO del concepto
-                        concept_clean = match.group(3).replace('\n', ' ').replace('\r', '').strip()
-                        # Quitamos espacios dobles generados
-                        concept_clean = re.sub(r'\s+', ' ', concept_clean)
+                    if text:
+                        full_text_blob += text + "\n"
 
-                        trans = Transaction(
-                            operation_date=match.group(1),
-                            code=match.group(2),
-                            concept=concept_clean,
-                            value_date=match.group(4),
-                            amount=self._clean_amount(match.group(5))
-                        )
-                        transactions.append(asdict(trans))
-                        
-            return pd.DataFrame(transactions)
+            # 2. LA MAGIA: Dividimos por comillas dobles (")
+            # Esto nos da una lista: [basura, FECHA, basura, CODIGO, basura, CONCEPTO...]
+            tokens = full_text_blob.split('"')
             
+            # Limpiamos tokens vacíos o que sean solo comas/espacios
+            tokens = [t.strip() for t in tokens]
+            
+            print(f"📊 Analizando {len(tokens)} fragmentos de datos...")
+
+            # 3. Buscamos patrones en la lista de fragmentos
+            i = 0
+            while i < len(tokens) - 8:
+                # Buscamos una fecha para empezar (Campo 1: F. Operación)
+                if self._is_date(tokens[i]):
+                    
+                    # HIPÓTESIS: Si tokens[i] es fecha, los siguientes deberían ser:
+                    # i+0: Fecha Oper
+                    # i+1: separador (comas, saltos, basura) -> LO SALTAMOS
+                    # i+2: Código
+                    # i+3: separador
+                    # i+4: Concepto
+                    # i+5: separador
+                    # i+6: Fecha Valor
+                    # i+7: separador
+                    # i+8: Importe
+                    
+                    # Verificamos si token[i+6] también es fecha para confirmar que es una fila válida
+                    # A veces los separadores son tokens vacíos en la lista, así que miramos un rango corto
+                    
+                    # Búsqueda local de los siguientes campos
+                    # Cogemos los siguientes 10 tokens y filtramos los que no sean separadores (comas)
+                    candidates = []
+                    offset = 0
+                    while len(candidates) < 5 and (i + offset) < len(tokens):
+                        val = tokens[i + offset]
+                        # Si es un valor "útil" (no es solo una coma o vacío)
+                        if len(val) > 1 or val.isalnum(): 
+                            candidates.append(val)
+                        offset += 1
+                    
+                    if len(candidates) == 5:
+                        # Validamos estructura fuerte: Fecha1 y Fecha2
+                        op_date, code, concept, val_date, amount_str = candidates
+                        
+                        if self._is_date(op_date) and self._is_date(val_date):
+                            # ¡BINGO! Hemos encontrado una fila
+                            trans = Transaction(
+                                operation_date=op_date.strip(),
+                                code=code.strip(),
+                                concept=concept.strip().replace('\n', ' '),
+                                value_date=val_date.strip(),
+                                amount=self._clean_amount(amount_str)
+                            )
+                            transactions.append(asdict(trans))
+                            # Saltamos el índice para no volver a procesar estos tokens
+                            i += offset - 1 
+                
+                i += 1
+
+            return pd.DataFrame(transactions)
+
         except Exception as e:
-            print(f"🔥 Error crítico leyendo el PDF: {e}")
+            print(f"🔥 Error crítico: {e}")
             sys.exit(1)
 
-# --- PRESENTATION LAYER ---
+# --- INTERFAZ ---
 
 def get_source_path() -> Path:
     while True:
-        raw_input = input("\n📂 Arrastra el archivo 'EXTRACTO TPV.pdf' aquí: ").strip()
-        
-        # Limpieza agresiva de comillas que mete Linux al arrastrar
+        raw_input = input("\n📂 Arrastra el PDF aquí: ").strip()
         if len(raw_input) > 1 and raw_input[0] in ['"', "'"] and raw_input[-1] == raw_input[0]:
             raw_input = raw_input[1:-1]
-
         path = Path(raw_input)
-        
-        if path.exists() and path.is_file():
-            return path.resolve()
-        
-        print(f"❌ No encuentro el archivo. Asegúrate de arrastrar el PDF correcto.")
+        if path.exists() and path.is_file(): return path.resolve()
+        print(f"❌ Archivo no encontrado.")
 
 def main():
-    print("\n--- 🚀 EXTRACTOR TPV v3.0 (Versión Blindada) ---\n")
-    
-    # 1. Input
+    print("\n--- 🚀 EXTRACTOR TPV v5.0 (Modo Trituradora) ---\n")
     source_file = get_source_path()
-    
-    # 2. Path Calculation
     output_file = source_file.with_suffix('.xlsx')
-    print(f"📍 Guardaré el Excel en: {output_file.name}")
-
-    # 3. Process
+    
     parser = StatementParser(source_file)
     df = parser.parse()
 
-    # 4. Output
     if not df.empty:
-        # Ordenamos por fecha
         df = df.sort_values(by='operation_date', ascending=False)
-        try:
-            df.to_excel(output_file, index=False)
-            print(f"\n✅ ¡FUNCIONÓ! {len(df)} movimientos extraídos.")
-            print(f"📂 Tu archivo está aquí: {output_file}")
-        except PermissionError:
-            print(f"\n⛔ CIERRA EL EXCEL. No puedo escribir si lo tienes abierto.")
+        # Reordenar columnas para que quede bonito
+        df = df[['operation_date', 'code', 'concept', 'value_date', 'amount']]
+        df.to_excel(output_file, index=False)
+        print(f"\n✅ ¡CONSEGUIDO! {len(df)} movimientos recuperados.")
+        print(f"💾 Guardado en: {output_file}")
     else:
-        print("\n⚠️  Sigo sin ver datos. Esto es rarísimo. ¿Seguro que es el PDF correcto?")
+        print("\n⚠️  Sigo sin datos. Esto ya es personal. Pásame una captura de este error.")
 
 if __name__ == "__main__":
     main()
