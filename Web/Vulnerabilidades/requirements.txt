@@ -1,0 +1,4 @@
+httpx==0.28.1
+pymetasploit3==1.0.6
+python-nmap==0.7.1
+rich==14.2.0
