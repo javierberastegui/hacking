@@ -4,6 +4,7 @@ aiohappyeyeballs==2.6.1
 aiohttp==3.13.3
 aiohttp>=3.8.5
 aiosignal==1.4.0
+argus-recon==2.0.0
 attrs==25.4.0
 beautifulsoup4>=4.12.2
 cchardet>=2.1.7    
