@@ -67,6 +67,7 @@ ENV/
 *.pptx
 *.odt
 *.ods
+*.txt
 
 # --- 6. Archivos Comprimidos ---
 *.zip
