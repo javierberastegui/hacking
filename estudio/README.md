@@ -1,51 +1,52 @@
-# 🍅 ArchitectFocus CLI v2.0
+# 🍅 Pomodoro Architect Edition
 
-> **A High-Performance, Over-Engineered Pomodoro Timer for Python Purists.**
+> **Advertencia:** Este no es el típico script de Pomodoro que copias de un tutorial básico de YouTube. Esto es Over-Engineering de Alta Disponibilidad.
 
 ![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)
 ![Architecture](https://img.shields.io/badge/architecture-solid-orange)
+![Dopamine Level](https://img.shields.io/badge/dopamine-high-critical)
 
-## 📖 Overview
+## 📖 ¿Qué es esto?
 
-**ArchitectFocus** is not your average productivity script. It is a robust, scalable, and type-strict Command Line Interface (CLI) designed to manage temporal cycles (Pomodoro technique) with architectural elegance.
+Si buscas un `while True: sleep(60)`, cierra la pestaña. Este repositorio contiene un **Sistema de Gestión de Ciclos Temporales** diseñado para mentes que valoran la arquitectura de software por encima de todo.
 
-Instead of relying on simple loops and blocking calls, this project demonstrates advanced Python patterns to handle state, resources, and user feedback efficiently.
+Hemos cogido un problema simple (contar tiempo) y lo hemos resuelto con un arsenal de patrones de diseño avanzados, solo porque podemos y porque el código limpio es innegociable.
 
-## 🛠️ Technical Arsenal
+## 🛠️ Arsenal Técnico (Lo que vas a aprender)
 
-This project was built to showcase **Senior-level Python capabilities**:
+No te limites a usarlo. **Estudia el código**. Aquí hay lecciones de Python nivel Senior gratis:
 
-* **Context Managers (`__enter__`, `__exit__`)**: Ensures fail-safe resource management and clean session teardowns, even during forced interruptions.
-* **Generators & Yield**: Implements memory-efficient time tracking that yields control rather than blocking execution flow.
-* **Closures & Factory Patterns**: Encapsulates state for notification and motivation systems, avoiding global variables and tightly coupled logic.
-* **Decorators**: Handles cross-cutting concerns (logging/auditing) without polluting business logic.
-* **Dataclasses (Frozen)**: Guarantees configuration immutability and thread-safety potential.
-* **Strict Typing**: 100% Type Hint coverage for predictability and IDE support.
+* **Context Managers (`with` statement):** Gestión de recursos robusta. Si el script peta, limpiamos la casa. Nada de dejar hilos colgados.
+* **Generadores (`yield`):** Flujo temporal no bloqueante. Iteramos sobre el tiempo, no esperamos pasivamente.
+* **Closures & Factorías:** Inyección de dependencias funcional para el sistema de notificaciones y motivación.
+* **Decoradores:** Auditoría de procesos (`logging`) desacoplada de la lógica de negocio.
+* **Dataclasses Inmutables:** Configuración estricta y tipada.
+* **Type Hinting Estricto:** Porque `Any` es para cobardes.
 
-## 🚀 Installation
+## 🚀 Instalación y Uso
 
-No heavy dependencies. Just pure, standard-library Python power.
+¿Te atreves a probarlo? Tienes dos opciones: seguir procastinando o clonar esto y ponerte a picar código de verdad.
 
-1.  **Clone the repository:**
+1.  **Clona el repo (si tienes agallas):**
     ```bash
-    git clone [https://github.com/your-username/architect-focus-cli.git](https://github.com/your-username/architect-focus-cli.git)
-    cd architect-focus-cli
+    git clone [https://github.com/javierberastegui/hacking.git](https://github.com/javierberastegui/hacking.git)
+    cd hacking/estudio
     ```
 
-2.  **Run the system:**
+2.  **Ejecuta el Arquitecto:**
+    Olvídate de `main.py` genéricos. Aquí llamamos a las cosas por su nombre.
     ```bash
-    python main.py
+    python3 pomodoro.py
     ```
 
-## ⚙️ Configuration
+3.  **Déjate llevar:**
+    Sigue las instrucciones en consola. El script te inyectará dosis de realidad y motivación (emojis incluidos) para que no levantes el culo de la silla hasta terminar el ciclo.
 
-The system is configured via the `PomodoroConfig` dataclass, ensuring a single source of truth:
+## 🧩 Reto para el lector
 
-```python
-@dataclass(frozen=True)
-class PomodoroConfig:
-    focus_duration: int = 25  # Minutes
-    break_duration: int = 5   # Minutes
-    cycles: int = 4
+El código está "fetén", pero siempre se puede escalar. ¿Crees que tienes nivel? Haz un Fork e intenta implementar:
+* Persistencia de estadísticas en SQLite (con ORM, no seas chapuzas).
+* Notificaciones nativas del SO multiplataforma.
+
+---
+*Codeado con exceso de cafeína y patrones de diseño. Úsalo bajo tu propia responsabilidad productiva.*
