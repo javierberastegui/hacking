@@ -29,7 +29,7 @@ No te limites a usarlo. **Estudia el código**. Aquí hay lecciones de Python ni
 
 1.  **Clona el repo (si tienes agallas):**
     ```bash
-    git clone [https://github.com/javierberastegui/hacking.git](https://github.com/javierberastegui/hacking.git)
+    git clone "(codigo del github - sin comillas)"
     cd hacking/estudio
     ```
 
