@@ -1,15 +1,15 @@
 # ==========================================
-# 🛡️ PROTOCOLO DE LIMPIEZA: NIVEL SENIOR
+# Hacking ético / pentesting autorizado
 # ==========================================
 
-# --- 1. Python & Compilados (Basura del sistema) ---
+# --- Python / builds ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
@@ -22,23 +22,85 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# --- 2. Entornos Virtuales (El Búnker) ---
+# --- Entornos virtuales ---
 venv/
 .venv/
 env/
 ENV/
 
-# --- 3. Configuración Local y Secretos (SEGURIDAD CRÍTICA) ---
-# Jamás subas esto o te hackean
-.envrc
+# --- Secretos / configuración local ---
 .env
-.env.local
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.kdbx
+*token*
+*secret*
+*credential*
+*password*
+*passwd*
+
+# --- Evidencias privadas / clientes / datos sensibles ---
+clientes/
+client-data/
+private/
+privado/
+evidencias_privadas/
+evidence-private/
+reports/private/
+loot/
+dumps/
+exfil/
+proofs-private/
+
+# --- Capturas de red / bases de datos / dumps ---
+*.pcap
+*.pcapng
+*.cap
+*.har
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql
+*.bak
+
+# --- Logs / temporales / backups ---
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*.old
+*.orig
+*.bak
+*.backup
+.DS_Store
+Thumbs.db
+.cache/
+tmp/
+temp/
+
+# --- IDEs ---
 .vscode/
 .idea/
 
-# --- 4. Multimedia (GitHub no es Spotify ni Instagram) ---
-# Si necesitas assets, súbelos a un S3 o CDN, no al repo
+# --- Multimedia y binarios pesados ---
 *.mp3
 *.wav
 *.flac
@@ -56,8 +118,6 @@ ENV/
 *.tiff
 *.ico
 *.svg
-
-# --- 5. Oficina y Documentos Pesados ---
 *.pdf
 *.doc
 *.docx
@@ -67,31 +127,26 @@ ENV/
 *.pptx
 *.odt
 *.ods
-*.txt
 
-# --- 6. Archivos Comprimidos ---
+# --- Comprimidos e imágenes de sistemas ---
 *.zip
 *.tar
 *.tar.gz
+*.tgz
 *.rar
 *.7z
 *.gz
+*.iso
+*.ova
+*.ovf
+*.vdi
+*.vmdk
 
-# --- 7. Logs, Temporales y Backups ---
-*.log
-*.bak
-*.tmp
-*.swp
-.DS_Store
-Thumbs.db
-
-# --- 8. Bases de Datos Locales ---
-*.sqlite3
-*.db
-
-# --- 9. Texto Genérico (Excepción Quirúrgica) ---
-# Ignoramos todos los .txt basura...
-*.txt
-# ...PERO salvamos el sagrado requirements.txt y el CMakeLists
+# --- Excepciones útiles ---
 !requirements.txt
 !CMakeLists.txt
+!docs/**
+!templates/**
+!scripts/**
+!examples/**
+!examples/demo-lab-sin-datos-reales/**
