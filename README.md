@@ -36,6 +36,8 @@ Repositorio personal para organizar metodología, scripts auxiliares seguros y d
 │   ├── kali_ssh_check.sh
 │   ├── lab_init.sh
 │   └── safe_command_log.sh
+├── recursos/                     # Recursos defensivos públicos para artículos
+│   └── sms-fraudulentos/
 ├── examples/
 │   └── demo-lab-sin-datos-reales/
 └── README.md
@@ -60,6 +62,10 @@ Crea una carpeta local con plantillas base, sin ejecutar escaneos ni herramienta
 ```
 
 Los scripts solo comprueban estado de VirtualBox/SSH local. No hacen reconocimiento ni pentesting.
+
+### Recursos defensivos para lectores
+
+- [SMS fraudulentos: checklist y plantilla local](recursos/sms-fraudulentos/README.md): recurso seguro para documentar un SMS sospechoso y actuar por canales oficiales, relacionado con el artículo “Cómo detectar SMS fraudulentos”.
 
 ### Registrar comandos de forma segura
 
